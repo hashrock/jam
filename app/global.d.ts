@@ -16,6 +16,8 @@ export type Bindings = {
   GOOGLE_SECRET: string;
   SESSION_SECRET: string;
   DEV_BYPASS_AUTH?: string;
+  /** GET /api/stats の Bearer トークン（secret）。未設定なら endpoint は 404 */
+  STATS_TOKEN?: string;
 };
 
 export type Env = {

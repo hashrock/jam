@@ -50,6 +50,12 @@ wrangler secret put GOOGLE_SECRET
 pnpm run deploy
 ```
 
+### サインアップ数（`GET /api/stats`）
+
+`Authorization: Bearer <STATS_TOKEN>` で `{ service, generated_at, users: { total, new_7d, new_30d } }` を返す（`scenario-` ユーザーは除外、`Cache-Control: no-store`）。
+`STATS_TOKEN` は secret（`wrangler secret put STATS_TOKEN`）で、未設定なら 404、不一致なら 401。セッションとは無関係。
+repos.hashrock.info の管理画面がこれを集めて表示・日次記録する。
+
 ## エージェントから使う
 
 ### リモート MCP（おすすめ）

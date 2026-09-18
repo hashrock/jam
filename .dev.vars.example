@@ -3,3 +3,5 @@ DEV_BYPASS_AUTH=1
 SESSION_SECRET=change-me
 GOOGLE_ID=
 GOOGLE_SECRET=
+# GET /api/stats の Bearer トークン。空なら /api/stats は 404
+STATS_TOKEN=
