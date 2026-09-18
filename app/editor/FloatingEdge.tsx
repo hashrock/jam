@@ -9,7 +9,7 @@ import {
   useInternalNode,
 } from '@xyflow/react'
 import { useState } from 'react'
-import { apply, setEditing, useBoardState } from './store'
+import { setEditing, tryCommit, useBoardState } from './store'
 
 export type JamEdge = RFEdge<{ label?: string; dashed?: boolean }>
 
@@ -45,7 +45,7 @@ function LabelEditor({ id, value }: { id: string; value: string }) {
   const [v, setV] = useState(value)
   const done = () => {
     setEditing(null)
-    if (v !== value) void apply([{ op: 'update', id, label: v }])
+    if (v !== value) tryCommit([{ op: 'update', id, label: v }])
   }
   return (
     <input

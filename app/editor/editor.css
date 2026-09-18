@@ -5,22 +5,20 @@
   --accent: #0d99ff;
   --sans: 'Inter', system-ui, -apple-system, 'Hiragino Sans', sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, monospace;
-  font: 14px/1.5 var(--sans);
-  color: var(--ink);
-  color-scheme: light;
-}
-
-html,
-body,
-#root {
-  margin: 0;
-  height: 100%;
 }
 
 .canvas {
-  position: fixed;
+  position: absolute;
   inset: 0;
   background: #f5f5f5;
+  font: 14px/1.5 var(--sans);
+  color: var(--ink);
+}
+
+.closed {
+  padding: 48px;
+  text-align: center;
+  color: var(--muted);
 }
 
 /* ---------------------------------------------------------------- toolbar */
@@ -215,17 +213,17 @@ body,
   font-weight: 700;
   white-space: nowrap;
 }
-.text-sm {
+.tsize-sm {
   font-size: 16px;
 }
-.text-md {
+.tsize-md {
   font-size: 24px;
 }
-.text-lg {
+.tsize-lg {
   font-size: 40px;
   line-height: 1.2;
 }
-.text-xl {
+.tsize-xl {
   font-size: 64px;
   line-height: 1.1;
 }
@@ -265,6 +263,7 @@ body,
 .md ul {
   margin: 0;
   padding-left: 1.2em;
+  list-style: disc;
 }
 
 .md-h {

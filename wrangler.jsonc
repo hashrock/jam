@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jam",
+  "main": "./app/server.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jam-db",
+      // `wrangler d1 create jam-db` で作った id に置き換える（ローカル開発では使われない）
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "BOARD", "class_name": "BoardRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }]
+}

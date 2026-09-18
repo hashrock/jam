@@ -1,0 +1,5 @@
+# ローカル開発用（pnpm dev）。本番は `wrangler secret put` で設定する
+DEV_BYPASS_AUTH=1
+SESSION_SECRET=change-me
+GOOGLE_ID=
+GOOGLE_SECRET=

@@ -1,27 +1,24 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# deps
+node_modules/
 
-node_modules
-dist
-dist-ssr
+# build / dev
+dist/
+.wrangler/
 *.local
 
-# Editor directories and files
+# generated
+app/pages.gen.ts
+worker-configuration.d.ts
+
+# env
+.dev.vars
+
+# misc
+.DS_Store
+*.log
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
 
-# jam board files
+# 旧ローカル版のボードファイル
 *.jam.json

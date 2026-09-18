@@ -11,25 +11,24 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { type MouseEvent, useCallback, useEffect, useMemo } from 'react'
-import { useApiStatus } from './board/api'
-import { FloatingEdge, type JamEdge } from './board/FloatingEdge'
-import { COLOR_NAMES, COLORS, DEFAULT_WIDTH, type El, type ElType } from './board/model'
-import { type ElNode, nodeTypes } from './board/nodes'
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef } from 'react'
+import { COLOR_NAMES, COLORS, DEFAULT_WIDTH, type El, type ElType } from '../board/model'
+import { FloatingEdge, type JamEdge } from './FloatingEdge'
+import { type ElNode, nodeTypes } from './nodes'
 import {
-  apply,
-  checkpoint,
+  connect,
   dropElements,
   getState,
-  layout,
-  movePositions,
   redo,
   setEditing,
   setMeasured,
+  setOverlay,
   setSelected,
+  tryCommit,
   undo,
   useBoardState,
-} from './board/store'
+} from './store'
+import { registerWebMcp, useWebMcpAvailable } from './webmcp'
 
 const edgeTypes = { floating: FloatingEdge }
 
@@ -48,6 +47,12 @@ function isTyping(e: KeyboardEvent) {
   return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
 }
 
+function select(ids: string[]) {
+  if (!ids.length) return
+  setSelected(ids)
+  setEditing(ids[0])
+}
+
 function Toolbar() {
   const { screenToFlowPosition } = useReactFlow()
   const board = useBoardState((s) => s.board)
@@ -56,7 +61,7 @@ function Toolbar() {
   const single = selEls.length === 1 ? selEls[0] : undefined
   const section = single?.type === 'section' ? single : undefined
 
-  const create = async (type: ElType, fields: Record<string, unknown>) => {
+  const create = (type: ElType, fields: Record<string, unknown>) => {
     // セクションを選択中ならその中に自動配置、そうでなければ画面中央に置く
     let pos: Record<string, unknown> = {}
     if (!section || type === 'section') {
@@ -64,26 +69,24 @@ function Toolbar() {
       const w = type === 'section' ? 640 : DEFAULT_WIDTH[type] || 120
       pos = { x: Math.round(c.x - w / 2), y: Math.round(c.y - 40) }
     }
-    const { ids } = await apply([{ op: 'create', type, parent: type === 'section' ? undefined : section?.id, ...pos, ...fields }])
-    setSelected(ids)
-    setEditing(ids[0])
+    select(tryCommit([{ op: 'create', type, parent: type === 'section' ? undefined : section?.id, ...pos, ...fields }]))
   }
 
   const patchSelected = (patch: Record<string, unknown>) =>
-    void apply(selEls.map((e) => ({ op: 'update' as const, id: e.id, ...patch })))
+    tryCommit(selEls.map((e) => ({ op: 'update' as const, id: e.id, ...patch })))
 
   return (
     <div className="toolbar">
       {TOOLS.map((t) => (
-        <button key={t.type} onClick={() => void create(t.type, t.fields)}>
+        <button key={t.type} onClick={() => create(t.type, t.fields)}>
           {t.label}
         </button>
       ))}
       <span className="sep" />
-      <button onClick={() => void layout(section?.id, 'grid')} title="選択中のセクション（なければ全体）を整列">
+      <button onClick={() => tryCommit([{ op: 'layout', id: section?.id, mode: 'grid' }])} title="選択中のセクション（なければ全体）を整列">
         整列
       </button>
-      <button onClick={() => void layout(section?.id, 'dag')} title="矢印の依存関係で左→右に並べる">
+      <button onClick={() => tryCommit([{ op: 'layout', id: section?.id, mode: 'dag' }])} title="矢印の依存関係で左→右に並べる">
         依存順
       </button>
       {selEls.length > 0 && (
@@ -115,33 +118,36 @@ function Toolbar() {
         </select>
       )}
       <span className="sep" />
-      <button onClick={undo}>↶</button>
-      <button onClick={redo}>↷</button>
+      <button onClick={undo} title="元に戻す (⌘Z)">
+        ↶
+      </button>
+      <button onClick={redo} title="やり直す (⇧⌘Z)">
+        ↷
+      </button>
     </div>
   )
 }
 
 function ConnectionStatus() {
-  const { hub, webmcp } = useApiStatus()
+  const connected = useBoardState((s) => s.connected)
+  const webmcp = useWebMcpAvailable()
   return (
     <div className="status">
-      <span
-        className={webmcp ? 'on' : 'off'}
-        title={webmcp ? 'このページのツールを WebMCP で公開中' : 'WebMCP 非対応。chrome://flags/#enable-webmcp-testing を有効にすると使える'}
-      >
-        WebMCP
+      <span className={connected ? 'on' : 'off'} title={connected ? 'サーバーと同期中' : '再接続中。変更は接続し直したときに送られる'}>
+        {connected ? '同期中' : 'オフライン'}
       </span>
       <span
-        className={hub ? 'on' : 'off'}
-        title={hub ? '開発サーバーと接続中（MCP ブリッジ・ファイル保存）' : '開発サーバーと未接続。変更はこのブラウザにだけ保存される'}
+        className={webmcp ? 'on' : 'off'}
+        title={webmcp ? 'このボードのツールを WebMCP で公開中' : 'WebMCP 非対応。chrome://flags/#enable-webmcp-testing を有効にすると使える'}
       >
-        MCP ブリッジ
+        WebMCP
       </span>
     </div>
   )
 }
 
-function toNode(el: El, selected: boolean, measured: { width: number; height: number } | undefined): ElNode {
+function toNode(raw: El, overlay: object | undefined, selected: boolean, measured: { width: number; height: number } | undefined): ElNode {
+  const el = (overlay ? { ...raw, ...overlay } : raw) as El
   const width = el.w ?? DEFAULT_WIDTH[el.type]
   const unplaced = el.x == null || el.y == null
   return {
@@ -160,13 +166,20 @@ function toNode(el: El, selected: boolean, measured: { width: number; height: nu
 
 function Canvas() {
   const board = useBoardState((s) => s.board)
+  const overlay = useBoardState((s) => s.overlay)
   const selected = useBoardState((s) => s.selected)
   const measured = useBoardState((s) => s.measured)
-  const { screenToFlowPosition } = useReactFlow()
+  const loaded = useBoardState((s) => s.loaded)
+  const { screenToFlowPosition, fitView } = useReactFlow()
+
+  // 最初の盤面が届いたら全体を表示する
+  useEffect(() => {
+    if (loaded) requestAnimationFrame(() => void fitView({ padding: 0.1 }))
+  }, [loaded, fitView])
 
   const nodes = useMemo(
-    () => board.elements.map((el) => toNode(el, selected.has(el.id), measured.get(el.id))),
-    [board.elements, selected, measured],
+    () => board.elements.map((el) => toNode(el, overlay.get(el.id), selected.has(el.id), measured.get(el.id))),
+    [board.elements, overlay, selected, measured],
   )
   const edges = useMemo<JamEdge[]>(
     () =>
@@ -192,16 +205,23 @@ function Canvas() {
     setSelected(next)
   }
 
+  const dragging = useRef(false)
   const onNodesChange = useCallback((changes: NodeChange<ElNode>[]) => {
     onSelect(changes.flatMap((c) => (c.type === 'select' ? [c] : [])))
     const moves = new Map<string, { x: number; y: number }>()
     const sizes: [string, { width: number; height: number }][] = []
+    // リサイズ中の位置変更は NodeResizer の onResize 側で扱う
+    const resizing = changes.some((c) => c.type === 'dimensions' && c.resizing)
     for (const c of changes) {
-      if (c.type === 'position' && c.position && c.dragging)
+      if (c.type === 'position' && c.position && !resizing)
         moves.set(c.id, { x: Math.round(c.position.x), y: Math.round(c.position.y) })
       if (c.type === 'dimensions' && c.dimensions && !c.resizing) sizes.push([c.id, c.dimensions])
     }
-    if (moves.size) movePositions(moves)
+    if (moves.size) {
+      setOverlay(moves)
+      // ドラッグ以外（矢印キー）での移動はその場で確定する。ドラッグは onNodeDragStop で確定する
+      if (!dragging.current) dropElements([...moves.keys()])
+    }
     if (sizes.length) setMeasured(sizes)
   }, [])
 
@@ -209,12 +229,10 @@ function Canvas() {
     onSelect(changes.flatMap((c) => (c.type === 'select' ? [c] : [])))
   }, [])
 
-  const onPaneDoubleClick = async (e: MouseEvent) => {
+  const onPaneDoubleClick = (e: MouseEvent) => {
     if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
     const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    const { ids } = await apply([{ op: 'create', type: 'note', text: '', x: Math.round(p.x - 120), y: Math.round(p.y - 30) }])
-    setSelected(ids)
-    setEditing(ids[0])
+    select(tryCommit([{ op: 'create', type: 'note', text: '', x: Math.round(p.x - 120), y: Math.round(p.y - 30) }]))
   }
 
   useEffect(() => {
@@ -246,25 +264,29 @@ function Canvas() {
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeDragStart={() => checkpoint()}
-        onNodeDragStop={(_, __, dragged) => dropElements(dragged.map((n) => n.id))}
+        onNodeDragStart={() => {
+          dragging.current = true
+        }}
+        onNodeDragStop={(_, __, dragged) => {
+          dragging.current = false
+          dropElements(dragged.map((n) => n.id))
+        }}
         onNodeDoubleClick={(_, n) => setEditing(n.id)}
         onEdgeDoubleClick={(_, e) => setEditing(e.id)}
-        onConnect={(c) => void apply([{ op: 'connect', from: c.source, to: c.target }])}
+        onConnect={(c) => tryCommit([{ op: 'connect', from: c.source, to: c.target }])}
         onConnectEnd={(e, conn) => {
           // ハンドルではなくノード本体の上で離しても接続する
           if (conn.isValid || !conn.fromNode) return
           const { clientX, clientY } = 'changedTouches' in e ? e.changedTouches[0] : e
           const to = document.elementFromPoint(clientX, clientY)?.closest('.react-flow__node')?.getAttribute('data-id')
-          if (to && to !== conn.fromNode.id) void apply([{ op: 'connect', from: conn.fromNode.id, to }])
+          if (to && to !== conn.fromNode.id) tryCommit([{ op: 'connect', from: conn.fromNode.id, to }])
         }}
-        onDelete={({ nodes, edges }) => void apply([...nodes, ...edges].map((n) => ({ op: 'delete' as const, id: n.id })))}
+        onDelete={({ nodes, edges }) => tryCommit([...nodes, ...edges].map((n) => ({ op: 'delete' as const, id: n.id })))}
         connectionMode={ConnectionMode.Loose}
         deleteKeyCode={['Backspace', 'Delete']}
         multiSelectionKeyCode={['Meta', 'Shift']}
         zoomOnDoubleClick={false}
         minZoom={0.1}
-        fitView
       >
         <Background gap={24} />
         <Controls showInteractive={false} />
@@ -276,7 +298,12 @@ function Canvas() {
   )
 }
 
-export default function App() {
+/** ボードを開いて編集する。サーバーとの接続と WebMCP の登録もここで行う */
+export default function BoardEditor({ boardId }: { boardId: string }) {
+  useEffect(() => connect(boardId), [boardId])
+  useEffect(() => registerWebMcp(), [boardId])
+  const closed = useBoardState((s) => s.closed)
+  if (closed) return <div className="closed">{closed}</div>
   return (
     <ReactFlowProvider>
       <Canvas />

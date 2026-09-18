@@ -2,59 +2,84 @@
 
 Claude Code や Codex から操作できる、FigJam の簡易版。コードの要約、issue / PR のリンク集、TODO と依存関係、設計図などをエージェントに並べさせ、人は同じ画面を手で直せる。
 
-## 起動
+Hono + Inertia.js + React 構成で、単一の Cloudflare Worker がサーバーとクライアントの両方を配信する（構成は edane に倣っている）。
+
+## 構成
+
+- 一覧・ユーザー・API トークンは **D1**、ボードの中身は **Durable Object（BoardRoom）** が1ボード1インスタンスで持つ
+- ブラウザのタブは WebSocket で BoardRoom につながり、手での編集も、エージェントの変更も、同じ順序で適用されて全タブに配られる
+- エージェントは **リモート MCP**（`/mcp`、API トークン）で直接つなぐ。ボードを開いたページは **WebMCP** でもツールを公開する
+- 座標を省いた要素は、開いているタブが実寸で自動配置する。タブが無ければサーバーが概算の寸法で配置する
+
+```
+app/
+  server.ts            Hono アプリ（ページ、認証、API、/mcp）。BoardRoom を export する
+  room.ts              BoardRoom（Durable Object）: 盤面の正本、WebSocket、自動配置の予備
+  mcp.ts               リモート MCP（Streamable HTTP, ステートレス）
+  boards.ts            D1 のボード一覧と BoardRoom をまたぐ操作
+  board/               ブラウザとサーバーで共有する純粋なロジック
+    model.ts           要素の型と色
+    ops.ts             操作の適用（applyOps）と差分
+    placement.ts       自動配置とレイアウト（寸法の測り方は外から渡す）
+    layout.ts          grid / dag（層状レイアウト）と寸法の概算
+    tools.ts           エージェント向けツールの定義と説明
+    protocol.ts        タブ ⇔ BoardRoom のメッセージ
+  editor/              キャンバス（React Flow）、同期ストア、WebMCP
+  pages/               Inertia ページ（Home, Boards/Index, Boards/Show, Settings）
+  auth/ utils/ db/     認証（Google OAuth / 開発用バイパス）、セッション、トークン、Drizzle スキーマ
+migrations/            D1 マイグレーション
+```
+
+## 開発
 
 ```sh
 pnpm install
-pnpm dev        # http://localhost:5199
+cp .dev.vars.example .dev.vars   # DEV_BYPASS_AUTH=1 で Dev User として自動ログイン
+pnpm migrate                     # ローカル D1 にマイグレーション適用（初回のみ）
+pnpm dev                         # http://localhost:5173
 ```
 
-ブラウザで開いておくと、盤面は `board.jam.json` に保存される。別の場所に保存するなら `JAM_FILE=/path/to/repo/design.jam.json pnpm dev`。
-ファイルをエディタや git で書き換えると、開いているタブに反映される（座標を省いた要素は自動配置される）。
+## デプロイ
+
+```sh
+wrangler d1 create jam-db          # 出力された database_id を wrangler.jsonc に書く
+pnpm migrate:remote
+wrangler secret put SESSION_SECRET
+wrangler secret put GOOGLE_ID      # Google OAuth クライアント。リダイレクト URI は https://<host>/auth/google
+wrangler secret put GOOGLE_SECRET
+pnpm run deploy
+```
 
 ## エージェントから使う
 
-経路は2つ。どちらも同じ `get_board` / `apply` を呼ぶ。画面右上のバッジで、どちらが有効か分かる。
+### リモート MCP（おすすめ）
 
-### A. WebMCP（ブラウザ標準）
+設定画面（`/settings`）で API トークンを発行し、登録する。コマンドは設定画面にもそのまま出る。
 
-ページは `document.modelContext.registerTool()` でツールを公開している（古い Chrome の `navigator.modelContext` にも対応）。
+```sh
+claude mcp add --transport http jam https://<host>/mcp --header "Authorization: Bearer jam_..."
+```
 
-1. Chrome で `chrome://flags/#enable-webmcp-testing` を有効にする（Chrome 149 以降）
-2. 稼働中の Chrome に外から接続できるよう、`chrome://inspect/#remote-debugging` でリモートデバッグを有効にする
-3. Chrome DevTools MCP を WebMCP 付きで登録する
+Codex（`~/.codex/config.toml`）:
+
+```toml
+[mcp_servers.jam]
+url = "https://<host>/mcp"
+bearer_token_env_var = "JAM_TOKEN"
+```
+
+ツール: `list_boards` / `create_board` / `get_board(board_id)` / `apply(board_id, ops)`
+
+### WebMCP
+
+ボードを開いたページが `document.modelContext` に `get_board` / `apply`（そのボードが対象）を登録する。
+Chrome で `chrome://flags/#enable-webmcp-testing` を有効にし、Chrome DevTools MCP を WebMCP 付きで登録すると使える。
 
 ```sh
 claude mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest --categoryExperimentalWebmcp=true --autoConnect
 ```
 
-エージェントは `list_webmcp_tools` でページのツールを見つけ、`execute_webmcp_tool`（`input` は JSON 文字列）で呼ぶ。
-こちらは汎用の経路なので、エージェントは毎回ページとツールを探す手間がかかる。
-
-### B. jam 専用の MCP ブリッジ
-
-`mcp/server.ts` は stdio の MCP サーバーで、開発サーバー経由でブラウザのボードを操作する。ブラウザのフラグは不要で、`get_board` / `apply` がそのまま MCP のツールとして見える。Node 22.18 以上が必要（TypeScript をそのまま実行する）。
-
-Claude Code:
-
-```sh
-claude mcp add jam -- node /path/to/jam/mcp/server.ts
-```
-
-Codex (`~/.codex/config.toml`):
-
-```toml
-[mcp_servers.jam]
-command = "node"
-args = ["/path/to/jam/mcp/server.ts"]
-```
-
-接続先を変えるときは環境変数 `JAM_URL`（既定 `http://localhost:5199`）。
-
-### ツール
-
-- `get_board` — 全要素（id, type, parent, 親からの相対 x/y, 実寸 w/h, 内容）と矢印を返す
-- `apply` — 操作の配列をまとめて適用する。1回が1つの undo 単位で、1つでも不正なら何も変更しない
+### apply の操作
 
 ```jsonc
 { "ops": [
@@ -86,24 +111,12 @@ args = ["/path/to/jam/mcp/server.ts"]
 
 色: white, gray, yellow, orange, red, pink, violet, blue, teal, green
 
+1回の `apply` が1つの undo 単位。1つでも不正な操作があれば何も変更せず、どの操作が何故だめかを返す。
+
 ## 手での操作
 
 - 余白をダブルクリックでメモ、ツールバーから各要素を追加（セクション選択中ならその中に追加）
 - ダブルクリックまたは Enter で編集、Esc / ⌘Enter / 枠外クリックで確定
 - ドラッグで移動。セクションに落とすと中に入る
 - ハンドルから相手のノードへドラッグして矢印を引く。矢印のダブルクリックでラベル編集
-- ⌘Z / ⇧⌘Z で undo / redo（エージェントの変更も同じ履歴）
-
-## 構成
-
-```
-src/board/model.ts      要素の型と色
-src/board/store.ts      盤面の状態・apply・自動配置・undo
-src/board/layout.ts     grid / dag（elkjs）配置
-src/board/tools.ts      ツール定義（ブラウザとブリッジで共有）
-src/board/api.ts        ツールの実装・ハブ接続・WebMCP 登録
-server/hub.ts           Vite プラグイン。タブとブリッジの中継、ファイル保存
-mcp/server.ts           MCP stdio ブリッジ
-```
-
-同じボードを複数のタブで開いた場合、最後に開いたタブがエージェントの操作を受け、変更は保存を通じて他のタブにも配られる。
+- ⌘Z / ⇧⌘Z で undo / redo。エージェントの変更も戻せる。他のタブでの変更は巻き戻さない（履歴は変更した要素の差分だけを持つ）

@@ -7,8 +7,8 @@ import {
   Position,
 } from '@xyflow/react'
 import { type KeyboardEvent, type ReactNode, useState } from 'react'
-import { COLORS, DEFAULT_COLOR, type El } from './model'
-import { apply, checkpoint, resizeElement, setEditing, useBoardState } from './store'
+import { COLORS, DEFAULT_COLOR, type El } from '../board/model'
+import { commitOverlay, setEditing, setOverlay, tryCommit, useBoardState } from './store'
 
 export type ElNode = Node<{ el: El }>
 
@@ -64,7 +64,7 @@ function useEditing(id: string) {
 
 function commit(id: string, patch: Record<string, unknown>) {
   setEditing(null)
-  void apply([{ op: 'update', id, ...patch }])
+  tryCommit([{ op: 'update', id, ...patch }])
 }
 
 function onEditorKey(e: KeyboardEvent, done: () => void) {
@@ -127,8 +127,8 @@ function WidthResizer({ id }: { id: string }) {
       variant={'line' as never}
       resizeDirection="horizontal"
       minWidth={80}
-      onResizeStart={checkpoint}
-      onResize={(_, p) => resizeElement(id, { w: Math.round(p.width) })}
+      onResize={(_, p) => setOverlay(new Map([[id, { w: Math.round(p.width) }]]))}
+      onResizeEnd={commitOverlay}
     />
   )
 }
@@ -158,7 +158,7 @@ function TaskNode({ data: { el }, selected }: NodeProps<ElNode>) {
         type="checkbox"
         className="nodrag"
         checked={!!el.done}
-        onChange={(e) => void apply([{ op: 'update', id: el.id, done: e.target.checked }])}
+        onChange={(e) => tryCommit([{ op: 'update', id: el.id, done: e.target.checked }])}
       />
       <EditableText el={el} field="text" md />
       <Handles />
@@ -257,7 +257,7 @@ function CodeNode({ data: { el }, selected }: NodeProps<ElNode>) {
 function TextNode({ data: { el } }: NodeProps<ElNode>) {
   if (el.type !== 'text') return null
   return (
-    <div className={`el text text-${el.size ?? 'md'}`}>
+    <div className={`el text tsize-${el.size ?? 'md'}`}>
       <EditableText el={el} field="text" />
       <Handles />
     </div>
@@ -273,10 +273,12 @@ function SectionNode({ data: { el }, selected }: NodeProps<ElNode>) {
         isVisible={selected}
         minWidth={200}
         minHeight={120}
-        onResizeStart={checkpoint}
         onResize={(_, p) =>
-          resizeElement(el.id, { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.width), h: Math.round(p.height) })
+          setOverlay(
+            new Map([[el.id, { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.width), h: Math.round(p.height) }]]),
+          )
         }
+        onResizeEnd={commitOverlay}
       />
       <div className="section-title" style={{ background: c.bg }}>
         <EditableText el={el} field="title" />

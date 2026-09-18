@@ -48,10 +48,21 @@ export type Edge = {
   dashed?: boolean
 }
 
+export type LayoutMode = 'grid' | 'dag'
+export type LayoutRequest = { id?: string; mode: LayoutMode }
+
 export type Board = {
   /** 描画順。親は必ず子より前に並ぶ */
   elements: El[]
   edges: Edge[]
+  /** まだ実行していないレイアウト要求。寸法を測れるタブ（なければサーバー）が処理して空にする */
+  layouts?: LayoutRequest[]
+}
+
+/** 変更された要素・矢印の値（null は削除）。undo/redo と同期の単位 */
+export type Patch = {
+  elements: Record<string, El | null>
+  edges: Record<string, Edge | null>
 }
 
 export const DEFAULT_WIDTH: Record<ElType, number> = {
@@ -73,3 +84,7 @@ export const DEFAULT_COLOR: Partial<Record<ElType, Color>> = {
 }
 
 export const emptyBoard = (): Board => ({ elements: [], edges: [] })
+
+/** 座標が未確定の要素か、未処理のレイアウト要求があるか */
+export const needsPlacement = (b: Board) =>
+  !!b.layouts?.length || b.elements.some((e) => e.x == null || e.y == null)
