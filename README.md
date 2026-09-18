@@ -45,7 +45,7 @@ pnpm dev                         # http://localhost:5173
 wrangler d1 create jam-db          # 出力された database_id を wrangler.jsonc に書く
 pnpm migrate:remote
 wrangler secret put SESSION_SECRET
-wrangler secret put GOOGLE_ID      # Google OAuth クライアント。リダイレクト URI は https://<host>/auth/google
+wrangler secret put GOOGLE_ID      # Google OAuth クライアント。リダイレクト URI は https://jam.hashrock.info/auth/google
 wrangler secret put GOOGLE_SECRET
 pnpm run deploy
 ```
@@ -57,14 +57,14 @@ pnpm run deploy
 設定画面（`/settings`）で API トークンを発行し、登録する。コマンドは設定画面にもそのまま出る。
 
 ```sh
-claude mcp add --transport http jam https://<host>/mcp --header "Authorization: Bearer jam_..."
+claude mcp add --transport http jam https://jam.hashrock.info/mcp --header "Authorization: Bearer jam_..."
 ```
 
 Codex（`~/.codex/config.toml`）:
 
 ```toml
 [mcp_servers.jam]
-url = "https://<host>/mcp"
+url = "https://jam.hashrock.info/mcp"
 bearer_token_env_var = "JAM_TOKEN"
 ```
 

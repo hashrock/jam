@@ -4,12 +4,12 @@
   "main": "./app/server.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "jam.hashrock.info", "custom_domain": true }],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "jam-db",
-      // `wrangler d1 create jam-db` で作った id に置き換える（ローカル開発では使われない）
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "b151a1f7-21e2-4309-9b21-a1272063cfc4"
     }
   ],
   "durable_objects": {
