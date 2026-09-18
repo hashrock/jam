@@ -2,6 +2,7 @@
   "name": "jam",
   "private": true,
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "scripts": {
@@ -11,6 +12,7 @@
     "deploy": "pnpm run build && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
+    "test": "node --test \"app/**/*.test.ts\"",
     "migrate": "wrangler d1 migrations apply jam-db --local",
     "migrate:remote": "wrangler d1 migrations apply jam-db --remote",
     "generate": "drizzle-kit generate",

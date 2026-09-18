@@ -120,3 +120,7 @@ claude mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest --categoryEx
 - ドラッグで移動。セクションに落とすと中に入る
 - ハンドルから相手のノードへドラッグして矢印を引く。矢印のダブルクリックでラベル編集
 - ⌘Z / ⇧⌘Z で undo / redo。エージェントの変更も戻せる。他のタブでの変更は巻き戻さない（履歴は変更した要素の差分だけを持つ）
+
+## ライセンス
+
+MIT
