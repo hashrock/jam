@@ -1,12 +1,15 @@
 // ブラウザ側の盤面。サーバー（BoardRoom）の正本に、まだ確認されていない自分の操作を重ねて表示する。
 import { useSyncExternalStore } from 'react'
 import { estimateSize, type Pos, type Size } from '../board/layout'
-import { type Board, DEFAULT_WIDTH, type El, emptyBoard, needsPlacement, type Patch } from '../board/model'
+import { type Board, DEFAULT_WIDTH, type El, type ElType, emptyBoard, needsPlacement, type Patch } from '../board/model'
 import { applyOps, descendants, diff, type Op, patchOp, withIds } from '../board/ops'
 import { growSections, placeBoard, placementOp } from '../board/placement'
 import type { ClientMessage, ServerMessage } from '../board/protocol'
 
 type Overlay = Partial<{ x: number; y: number; w: number; h: number }>
+
+/** 選択・手のひら、または次のクリックで置く要素の種類 */
+export type Tool = 'select' | 'hand' | ElType
 
 type State = {
   /** 表示中の盤面 = 正本 + 未確認の自分の操作 */
@@ -23,6 +26,7 @@ type State = {
   closed: string | null
   /** 最初の盤面が届いたか */
   loaded: boolean
+  tool: Tool
 }
 
 const initial = (): State => ({
@@ -35,6 +39,7 @@ const initial = (): State => ({
   primary: false,
   closed: null,
   loaded: false,
+  tool: 'select',
 })
 
 let state = initial()
@@ -329,6 +334,10 @@ export function setSelected(ids: Iterable<string>) {
 
 export function setEditing(id: string | null) {
   emit({ editing: id })
+}
+
+export function setTool(tool: Tool) {
+  emit({ tool })
 }
 
 export function setOverlay(updates: Map<string, Overlay>) {

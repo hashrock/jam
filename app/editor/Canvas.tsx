@@ -4,7 +4,6 @@ import {
   Controls,
   type EdgeChange,
   MarkerType,
-  MiniMap,
   type NodeChange,
   ReactFlow,
   ReactFlowProvider,
@@ -13,8 +12,9 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef } from 'react'
-import type { Pos } from '../board/layout'
-import { COLOR_NAMES, COLORS, DEFAULT_WIDTH, type El, type ElType } from '../board/model'
+import { DEFAULT_WIDTH, type El, type ElType } from '../board/model'
+import type { SessionUser } from '../user'
+import { BoardMenu, ConnectionStatus, DRAG_TYPE, ELEMENT_TOOLS, placeElement, SelectionBar, Toolbar } from './chrome'
 import { pasteOps, serialize } from './clipboard'
 import { FloatingEdge, type JamEdge } from './FloatingEdge'
 import { type ElNode, nodeTypes } from './nodes'
@@ -29,153 +29,24 @@ import {
   setMeasured,
   setOverlay,
   setSelected,
+  setTool,
   sizeOf,
+  type Tool,
   tryCommit,
   undo,
   useBoardState,
 } from './store'
-import { registerWebMcp, useWebMcpAvailable } from './webmcp'
+import { registerWebMcp } from './webmcp'
 
 const edgeTypes = { floating: FloatingEdge }
-
-const DRAG_TYPE = 'application/x-jam-tool'
-
-const TOOLS: { type: ElType; label: string; fields: Record<string, unknown> }[] = [
-  { type: 'note', label: 'メモ', fields: { text: '' } },
-  { type: 'task', label: 'タスク', fields: { text: '' } },
-  { type: 'link', label: 'リンク', fields: { url: '', title: '' } },
-  { type: 'box', label: '図形', fields: { text: '' } },
-  { type: 'code', label: 'コード', fields: { code: '', lang: 'ts' } },
-  { type: 'text', label: 'テキスト', fields: { text: '見出し', size: 'lg' } },
-  { type: 'section', label: 'セクション', fields: { title: 'セクション', w: 640, h: 400 } },
-]
 
 function isTyping(e: Event) {
   const t = (e.target ?? document.activeElement) as HTMLElement | null
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
 }
 
-/** その点を含む一番内側のセクション */
-function sectionAt(p: Pos): El | undefined {
-  const board = getState().board
-  const map = byId(board)
-  let hit: El | undefined
-  for (const e of board.elements) {
-    if (e.type !== 'section') continue
-    const a = absPos(e.id, map)
-    const s = sizeOf(e)
-    if (p.x >= a.x && p.x <= a.x + s.width && p.y >= a.y && p.y <= a.y + s.height) hit = e // 後ろほど深い
-  }
-  return hit
-}
-
-function select(ids: string[]) {
-  if (!ids.length) return
-  setSelected(ids)
-  setEditing(ids[0])
-}
-
-function Toolbar() {
-  const { screenToFlowPosition } = useReactFlow()
-  const board = useBoardState((s) => s.board)
-  const selected = useBoardState((s) => s.selected)
-  const selEls = board.elements.filter((e) => selected.has(e.id))
-  const single = selEls.length === 1 ? selEls[0] : undefined
-  const section = single?.type === 'section' ? single : undefined
-
-  const create = (type: ElType, fields: Record<string, unknown>) => {
-    // セクションを選択中ならその中に自動配置、そうでなければ画面中央に置く
-    let pos: Record<string, unknown> = {}
-    if (!section || type === 'section') {
-      const c = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-      const w = type === 'section' ? 640 : DEFAULT_WIDTH[type] || 120
-      pos = { x: Math.round(c.x - w / 2), y: Math.round(c.y - 40) }
-    }
-    select(tryCommit([{ op: 'create', type, parent: type === 'section' ? undefined : section?.id, ...pos, ...fields }]))
-  }
-
-  const patchSelected = (patch: Record<string, unknown>) =>
-    tryCommit(selEls.map((e) => ({ op: 'update' as const, id: e.id, ...patch })))
-
-  return (
-    <div className="toolbar">
-      {TOOLS.map((t) => (
-        <button
-          key={t.type}
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData(DRAG_TYPE, t.type)
-            e.dataTransfer.effectAllowed = 'copy'
-          }}
-          onClick={() => create(t.type, t.fields)}
-          title="クリックで中央に、ドラッグで好きな場所に置く"
-        >
-          {t.label}
-        </button>
-      ))}
-      <span className="sep" />
-      <button onClick={() => tryCommit([{ op: 'layout', id: section?.id, mode: 'grid' }])} title="選択中のセクション（なければ全体）を整列">
-        整列
-      </button>
-      <button onClick={() => tryCommit([{ op: 'layout', id: section?.id, mode: 'dag' }])} title="矢印の依存関係で左→右に並べる">
-        依存順
-      </button>
-      {selEls.length > 0 && (
-        <>
-          <span className="sep" />
-          {COLOR_NAMES.map((c) => (
-            <button
-              key={c}
-              className="swatch"
-              title={c}
-              style={{ background: COLORS[c].bg }}
-              onClick={() => patchSelected({ color: c })}
-            />
-          ))}
-        </>
-      )}
-      {single?.type === 'box' && (
-        <select value={single.shape ?? 'round'} onChange={(e) => patchSelected({ shape: e.target.value })}>
-          {['rect', 'round', 'ellipse', 'diamond', 'db'].map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
-      )}
-      {single?.type === 'text' && (
-        <select value={single.size ?? 'md'} onChange={(e) => patchSelected({ size: e.target.value })}>
-          {['sm', 'md', 'lg', 'xl'].map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
-      )}
-      <span className="sep" />
-      <button onClick={undo} title="元に戻す (⌘Z)">
-        ↶
-      </button>
-      <button onClick={redo} title="やり直す (⇧⌘Z)">
-        ↷
-      </button>
-    </div>
-  )
-}
-
-function ConnectionStatus() {
-  const connected = useBoardState((s) => s.connected)
-  const webmcp = useWebMcpAvailable()
-  return (
-    <div className="status">
-      <span className={connected ? 'on' : 'off'} title={connected ? 'サーバーと同期中' : '再接続中。変更は接続し直したときに送られる'}>
-        {connected ? '同期中' : 'オフライン'}
-      </span>
-      <span
-        className={webmcp ? 'on' : 'off'}
-        title={webmcp ? 'このボードのツールを WebMCP で公開中' : 'WebMCP 非対応。chrome://flags/#enable-webmcp-testing を有効にすると使える'}
-      >
-        WebMCP
-      </span>
-    </div>
-  )
-}
+/** 1文字のショートカットでツールを切り替える（FigJam と同じ割り当て） */
+const TOOL_KEYS: Record<string, Tool> = { v: 'select', h: 'hand', s: 'note', r: 'box', t: 'text', S: 'section' }
 
 function toNode(raw: El, overlay: object | undefined, selected: boolean, measured: { width: number; height: number } | undefined): ElNode {
   const el = (overlay ? { ...raw, ...overlay } : raw) as El
@@ -195,12 +66,13 @@ function toNode(raw: El, overlay: object | undefined, selected: boolean, measure
   }
 }
 
-function Canvas() {
+function Canvas({ menu }: { menu: React.ReactNode }) {
   const board = useBoardState((s) => s.board)
   const overlay = useBoardState((s) => s.overlay)
   const selected = useBoardState((s) => s.selected)
   const measured = useBoardState((s) => s.measured)
   const loaded = useBoardState((s) => s.loaded)
+  const tool = useBoardState((s) => s.tool)
   const { screenToFlowPosition, fitView } = useReactFlow()
   const pointer = useRef<{ x: number; y: number } | null>(null)
   const selectionStart = useRef<{ x: number; y: number } | null>(null)
@@ -271,25 +143,19 @@ function Canvas() {
   // ツールバーからドラッグ＆ドロップで置く。セクションの上なら中に入れる
   const onDrop = (e: DragEvent) => {
     const type = e.dataTransfer.getData(DRAG_TYPE) as ElType
-    const tool = TOOLS.find((t) => t.type === type)
-    if (!tool) return
+    if (!ELEMENT_TOOLS.some((t) => t.type === type)) return
     e.preventDefault()
-    const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    const w = type === 'section' ? 640 : DEFAULT_WIDTH[type] || 120
-    const parent = type === 'section' ? undefined : sectionAt(p)
-    const origin = parent ? absPos(parent.id, byId(getState().board)) : { x: 0, y: 0 }
-    select(
-      tryCommit([
-        {
-          op: 'create',
-          type,
-          ...tool.fields,
-          parent: parent?.id,
-          x: Math.round(p.x - origin.x - w / 2),
-          y: Math.round(p.y - origin.y - 20),
-        },
-      ]),
-    )
+    placeElement(type, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
+    setTool('select')
+  }
+
+  // 要素のツールを選んだ後のクリックで、その場所に置いて選択ツールに戻る（FigJam と同じ）
+  const placeAt = (e: MouseEvent) => {
+    const t = getState().tool
+    if (t === 'select' || t === 'hand') return false
+    placeElement(t, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
+    setTool('select')
+    return true
   }
 
   // 範囲選択は触れた要素を選ぶが、セクションは丸ごと囲んだときだけ選ぶ（中で始めた範囲選択でセクション自体を掴まない）
@@ -345,9 +211,8 @@ function Canvas() {
   }, [screenToFlowPosition])
 
   const onPaneDoubleClick = (e: MouseEvent) => {
-    if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
-    const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    select(tryCommit([{ op: 'create', type: 'note', text: '', x: Math.round(p.x - 120), y: Math.round(p.y - 30) }]))
+    if (!(e.target as HTMLElement).classList.contains('react-flow__pane') || getState().tool !== 'select') return
+    placeElement('note', screenToFlowPosition({ x: e.clientX, y: e.clientY }))
   }
 
   useEffect(() => {
@@ -364,15 +229,21 @@ function Canvas() {
       } else if (e.key === 'Enter' && getState().selected.size === 1) {
         e.preventDefault()
         setEditing([...getState().selected][0])
+      } else if (e.key === 'Escape') {
+        setTool('select')
+      } else if (e.shiftKey && e.key === '!') {
+        void fitView({ padding: 0.1, duration: 200 })
+      } else if (!mod && !e.altKey && TOOL_KEYS[e.key]) {
+        setTool(TOOL_KEYS[e.key])
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [fitView])
 
   return (
     <div
-      className="canvas"
+      className={`canvas tool-${tool === 'select' || tool === 'hand' ? tool : 'place'}`}
       onDoubleClick={onPaneDoubleClick}
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -397,6 +268,8 @@ function Canvas() {
           dragging.current = false
           dropElements(dragged.map((n) => n.id))
         }}
+        onPaneClick={placeAt}
+        onNodeClick={(e) => placeAt(e)}
         onNodeDoubleClick={(_, n) => setEditing(n.id)}
         onEdgeDoubleClick={(_, e) => setEditing(e.id)}
         onConnect={(c) => tryCommit([{ op: 'connect', from: c.source, to: c.target }])}
@@ -415,19 +288,24 @@ function Canvas() {
         connectionMode={ConnectionMode.Loose}
         deleteKeyCode={['Backspace', 'Delete']}
         multiSelectionKeyCode={['Meta', 'Shift']}
-        // FigJam と同じ: 左ドラッグは範囲選択、パンは中ボタン / Space + ドラッグ / 2本指スクロール、⌘・Ctrl + スクロールでズーム
-        selectionOnDrag
+        // FigJam と同じ: 左ドラッグは範囲選択、パンは中ボタン / Space + ドラッグ / 2本指スクロール / 手のひらツール、
+        // ⌘・Ctrl + スクロールでズーム
+        selectionOnDrag={tool === 'select'}
         selectionMode={SelectionMode.Partial}
-        panOnDrag={[1]}
+        panOnDrag={tool === 'hand' ? [0, 1] : [1]}
+        nodesDraggable={tool === 'select'}
+        nodesConnectable={tool === 'select'}
+        elementsSelectable={tool !== 'hand'}
         panOnScroll
         zoomActivationKeyCode={['Meta', 'Control']}
         zoomOnDoubleClick={false}
         minZoom={0.1}
       >
         <Background gap={24} />
-        <Controls showInteractive={false} />
-        <MiniMap pannable zoomable />
+        <Controls position="bottom-right" showInteractive={false} />
+        <SelectionBar />
       </ReactFlow>
+      {menu}
       <Toolbar />
       <ConnectionStatus />
     </div>
@@ -435,14 +313,20 @@ function Canvas() {
 }
 
 /** ボードを開いて編集する。サーバーとの接続と WebMCP の登録もここで行う */
-export default function BoardEditor({ boardId }: { boardId: string }) {
+export default function BoardEditor({ boardId, title, user }: { boardId: string; title: string; user: SessionUser }) {
   useEffect(() => connect(boardId), [boardId])
   useEffect(() => registerWebMcp(), [boardId])
   const closed = useBoardState((s) => s.closed)
-  if (closed) return <div className="closed">{closed}</div>
+  if (closed)
+    return (
+      <div className="closed">
+        {closed}
+        <a href="/boards">ボード一覧へ</a>
+      </div>
+    )
   return (
     <ReactFlowProvider>
-      <Canvas />
+      <Canvas menu={<BoardMenu boardId={boardId} title={title} user={user} />} />
     </ReactFlowProvider>
   )
 }
