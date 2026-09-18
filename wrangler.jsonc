@@ -5,7 +5,7 @@
   "main": "./app/server.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  "routes": [{ "pattern": "jam.hashrock.info", "custom_domain": true }],
+  "routes": [{ "pattern": "jam.hashrock.info/*", "zone_name": "hashrock.info" }],
   "workers_dev": false,
   "d1_databases": [
     {
