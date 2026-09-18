@@ -44,10 +44,43 @@ function emit(next: Partial<State>) {
 }
 
 let saveTimer: number | undefined
-function setBoard(board: Board) {
+let persist: ((board: Board) => void) | undefined
+
+function setBoard(board: Board, opts: { save?: boolean } = {}) {
   emit({ board })
+  if (opts.save === false) return
   clearTimeout(saveTimer)
-  saveTimer = window.setTimeout(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(board)), 300)
+  saveTimer = window.setTimeout(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(board))
+    persist?.(board)
+  }, 300)
+}
+
+/** 盤面が変わるたびに（間引いて）呼ばれる保存先を登録する */
+export function setPersist(fn: (board: Board) => void) {
+  persist = fn
+}
+
+/**
+ * 外部（ファイル）から読み込んだ盤面に置き換える。
+ * initial のときは履歴を捨て、それ以外は undo できる変更として扱う。
+ */
+export function replaceBoard(board: Board, opts: { initial?: boolean; place?: boolean } = {}) {
+  if (opts.initial) {
+    past = []
+    future = []
+  } else {
+    checkpoint()
+  }
+  clearTimeout(saveTimer)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(board))
+  setBoard({ elements: normalize(board.elements ?? []), edges: board.edges ?? [] }, { save: false })
+  // ファイルを直接書き換えて座標を省いた要素も自動配置する。
+  // 複数タブで開いているときは1つのタブだけが配置し、結果は保存経由で他のタブに届く
+  if (opts.place !== false && state.board.elements.some((e) => e.x == null || e.y == null)) {
+    wantPlace = true
+    scheduleFlush()
+  }
 }
 
 export const getState = () => state
@@ -296,6 +329,7 @@ export function apply(ops: Op[], opts: { record?: boolean } = {}): Promise<{ ids
   pending.layouts.push(...layouts)
   return new Promise((resolve) => {
     pending.waiters.push(() => resolve({ ids }))
+    wantPlace = true
     scheduleFlush()
   })
 }
@@ -306,6 +340,8 @@ export function apply(ops: Op[], opts: { record?: boolean } = {}): Promise<{ ids
 let flushTimer: number | undefined
 let flushDeadline = 0
 let flushing = false
+/** このタブが未配置の要素を配置する必要があるか */
+let wantPlace = false
 
 function scheduleFlush() {
   if (!flushDeadline) flushDeadline = Date.now() + 500
@@ -315,12 +351,19 @@ function scheduleFlush() {
 
 async function flush() {
   if (flushing) return scheduleFlush()
+  if (!wantPlace) {
+    flushDeadline = 0
+    return
+  }
   const unplaced = state.board.elements.filter((e) => e.x == null || e.y == null)
   const unmeasured = unplaced.some((e) => e.type !== 'section' && !state.measured.has(e.id))
   // 測れない（バックグラウンドタブなど）ときは概算サイズで進める
   if (unmeasured && Date.now() < flushDeadline) return scheduleFlush()
   flushDeadline = 0
   flushing = true
+  // 実行中に来た依頼は次回の flush で扱う
+  wantPlace = false
+  const waiters = pending.waiters.splice(0)
   try {
     // 深い階層から順に「子を配置 → そのセクションのレイアウト → セクションを広げる」を行い、
     // 大きさが確定してから親の中に配置する
@@ -338,7 +381,7 @@ async function flush() {
   } finally {
     flushing = false
   }
-  pending.waiters.splice(0).forEach((w) => w())
+  waiters.forEach((w) => w())
 }
 
 function place(els: El[], atDepth: number, depth: (id: string) => number): El[] {
@@ -411,7 +454,7 @@ export function setMeasured(updates: [string, Size][]) {
   const m = new Map(state.measured)
   for (const [id, s] of updates) m.set(id, s)
   emit({ measured: m })
-  if (state.board.elements.some((e) => e.x == null || e.y == null)) scheduleFlush()
+  if (wantPlace) scheduleFlush()
 }
 
 /** ドラッグ中の位置更新（履歴には積まない。ドラッグ開始時に checkpoint 済み） */

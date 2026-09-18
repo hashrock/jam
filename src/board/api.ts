@@ -1,5 +1,6 @@
-import { COLOR_NAMES } from './model'
-import { apply, getState, type Op, sizeOf } from './store'
+import type { Board } from './model'
+import { apply, getState, type Op, replaceBoard, setPersist, sizeOf } from './store'
+import { HUB_PATH, type ToolName, toolDefs, type WireMessage } from './tools'
 
 /** エージェント向けの盤面スナップショット。座標は親からの相対値、w/h は実寸 */
 export function getBoard() {
@@ -14,76 +15,88 @@ export function getBoard() {
   }
 }
 
-const OPS_DOC = `Apply a batch of operations to the board atomically (one undo step). If any op is invalid, nothing changes and an error names the failing op.
-
-Ops:
-- {op:"create", type, id?, parent?, x?, y?, w?, color?, ...fields}
-- {op:"update", id, ...fields}   (element or edge; set a field to null to clear it)
-- {op:"delete", id}              (element with all its children and edges, or an edge)
-- {op:"connect", from, to, id?, label?, dashed?}   (arrow from -> to)
-- {op:"layout", id?, mode:"grid"|"dag"}   (re-arrange children of section id, or top level if omitted; dag = left-to-right dependency graph using edges)
-
-Element types and fields:
-- section {title}         container; put related items inside via parent
-- note    {text}          markdown-lite: "# heading", "- bullet", **bold**, \`code\`, URLs
-- task    {text, done}    TODO item with checkbox
-- link    {url, title}    issue / PR / doc link
-- box     {text, shape}   diagram node; shape: rect | round | ellipse | diamond | db
-- code    {code, lang}
-- text    {text, size}    heading/label without background; size: sm | md | lg | xl
-
-colors: ${COLOR_NAMES.join(', ')}
-
-Guidance:
-- Pick your own short readable ids (e.g. "api", "t1") so later ops in the same batch can reference them.
-- Omit x/y: new items are auto-placed (appended into the parent section, or to the right of existing top-level content). Sections grow to fit.
-- The user also edits the board by hand. Read the board first and do not move existing items unless asked; avoid "layout" on sections the user arranged.
-- For dependency graphs: create items in a section, connect them, then {op:"layout", id:section, mode:"dag"}.`
-
-export const tools = [
-  {
-    name: 'get_board',
-    description:
-      'Read the whole board: elements (id, type, parent, x/y relative to parent, w/h in px, content fields) and edges (from -> to).',
-    inputSchema: { type: 'object', properties: {} },
-    execute: async () => getBoard(),
+const handlers: Record<ToolName, (input: never) => Promise<unknown>> = {
+  get_board: async () => getBoard(),
+  apply: async ({ ops }: { ops: Op[] }) => {
+    if (!Array.isArray(ops)) throw new Error('"ops" must be an array')
+    return apply(ops)
   },
-  {
-    name: 'apply',
-    description: OPS_DOC,
-    inputSchema: {
-      type: 'object',
-      properties: { ops: { type: 'array', items: { type: 'object' } } },
-      required: ['ops'],
-    },
-    execute: async ({ ops }: { ops: Op[] }) => apply(ops),
-  },
-]
+}
+
+async function call(name: string, input: unknown) {
+  const h = handlers[name as ToolName]
+  if (!h) throw new Error(`unknown tool "${name}"`)
+  return h((input ?? {}) as never)
+}
+
+// ---------------------------------------------------------------------------
+// 開発サーバーのハブと接続する（MCP ブリッジからの呼び出しの中継と、ファイル保存）
+
+function connectHub() {
+  let retry = 1000
+  let loaded = false
+  let primary = true
+  const open = () => {
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${HUB_PATH}?role=board`)
+    const send = (m: WireMessage) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
+    ws.onopen = () => {
+      retry = 1000
+      setPersist((board) => send({ type: 'save', board }))
+    }
+    ws.onmessage = async (ev) => {
+      const m = JSON.parse(ev.data as string) as WireMessage
+      if (m.type === 'load') {
+        const same = JSON.stringify(m.board) === JSON.stringify(getState().board)
+        if (m.board && !same) replaceBoard(m.board as Board, { initial: !loaded, place: primary })
+        // ファイルがまだ無ければ、手元の盤面で作る
+        else send({ type: 'save', board: getState().board })
+        loaded = true
+      } else if (m.type === 'role') {
+        primary = m.primary
+      } else if (m.type === 'call') {
+        try {
+          send({ type: 'result', id: m.id, ok: true, result: await call(m.name, m.input) })
+        } catch (e) {
+          send({ type: 'result', id: m.id, ok: false, error: (e as Error).message })
+        }
+      }
+    }
+    ws.onclose = () => {
+      setPersist(() => {})
+      setTimeout(open, retry)
+      retry = Math.min(retry * 2, 10000)
+    }
+  }
+  open()
+}
+
+// ---------------------------------------------------------------------------
 
 type ModelContext = {
   registerTool(tool: {
     name: string
     description: string
     inputSchema: object
-    execute: (input: never) => Promise<{ content: { type: 'text'; text: string }[] }>
+    execute: (input: unknown) => Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }>
   }): unknown
 }
 
 export function installApi() {
-  const jam = { getBoard, apply, tools }
-  Object.assign(window, { jam })
+  Object.assign(window, { jam: { getBoard, apply, call } })
 
+  if (import.meta.env.DEV) connectHub()
+
+  // ブラウザが WebMCP に対応していれば、ページから直接ツールを公開する
   const mc = (navigator as Navigator & { modelContext?: ModelContext }).modelContext
   if (!mc) return
-  for (const t of tools) {
+  for (const t of toolDefs) {
     mc.registerTool({
       ...t,
-      execute: async (input: never) => {
+      execute: async (input) => {
         try {
-          const result = await t.execute(input)
-          return { content: [{ type: 'text', text: JSON.stringify(result) }] }
+          return { content: [{ type: 'text', text: JSON.stringify(await call(t.name, input)) }] }
         } catch (e) {
-          return { content: [{ type: 'text', text: `error: ${(e as Error).message}` }], isError: true } as never
+          return { content: [{ type: 'text', text: `error: ${(e as Error).message}` }], isError: true }
         }
       },
     })

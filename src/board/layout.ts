@@ -49,6 +49,7 @@ export async function dag(
       'elk.spacing.nodeNode': '40',
       'elk.layered.spacing.nodeNodeBetweenLayers': '80',
       'elk.spacing.componentComponent': '60',
+      'elk.padding': '[top=0,left=0,bottom=0,right=0]',
     },
     children: items.map((i) => ({ id: i.id, width: i.size.width, height: i.size.height })),
     edges: edges

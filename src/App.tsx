@@ -244,7 +244,6 @@ function Canvas() {
         zoomOnDoubleClick={false}
         minZoom={0.1}
         fitView
-        proOptions={{ hideAttribution: true }}
       >
         <Background gap={24} />
         <Controls showInteractive={false} />
