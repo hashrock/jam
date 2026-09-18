@@ -4,6 +4,8 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex items-center justify-center px-6">
       <Head title="jam" />
+      {/* ログイン前の画面はヘッダーが無いので、画面右上の角に浮かせる */}
+      <hashrock-switcher floating />
       <main className="max-w-xl">
         <h1 className="flex items-center gap-3 text-4xl font-bold tracking-tight">
           <img src="/logo.svg" alt="" className="w-14 h-14" />

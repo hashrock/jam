@@ -28,3 +28,15 @@ export type Env = {
     auth: AuthProvider;
   };
 };
+
+/** repos.hashrock.info が配るサービス切り替え（root-view.tsx で読み込む） */
+declare module "react" {
+  namespace JSX {
+    interface IntrinsicElements {
+      "hashrock-switcher": React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+        floating?: boolean;
+        theme?: "light" | "dark";
+      };
+    }
+  }
+}

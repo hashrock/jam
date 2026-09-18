@@ -335,6 +335,12 @@ export function ConnectionStatus() {
       >
         WebMCP
       </span>
+      {/* ボード画面はヘッダーが無いので、右上の状態表示の右端に置く。
+          Shadow DOM 内のキー入力は host が target に見えて isTyping をすり抜け、
+          Backspace で選択中の要素が消えるなどエディタのショートカットに化けるので、ここで止める */}
+      <div className="switcher" onKeyDown={(e) => e.stopPropagation()}>
+        <hashrock-switcher />
+      </div>
     </div>
   )
 }
