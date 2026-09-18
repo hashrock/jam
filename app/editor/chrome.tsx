@@ -335,6 +335,10 @@ export function ConnectionStatus() {
       >
         WebMCP
       </span>
+      {/* ボード画面はヘッダーが無いので、右上の状態表示の右端に置く */}
+      <div className="switcher">
+        <hashrock-switcher />
+      </div>
     </div>
   )
 }

@@ -617,9 +617,20 @@
   top: calc(12px + env(safe-area-inset-top, 0px));
   right: 12px;
   display: flex;
+  align-items: center;
   gap: 6px;
   z-index: 10;
   font-size: 12px;
+}
+
+/* hashrock のサービス切り替え。左上の .pill と同じ浮いたパネルに載せる */
+.status .switcher {
+  display: flex;
+  padding: 4px;
+  background: var(--panel);
+  border-radius: 12px;
+  box-shadow: var(--panel-shadow);
+  color: var(--muted);
 }
 
 .status span {

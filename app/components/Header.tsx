@@ -20,6 +20,8 @@ export default function Header({ user, children }: { user: SessionUser; children
       <a href="/auth/logout" className="text-slate-500 hover:text-slate-900">
         ログアウト
       </a>
+      {/* 押し間違えないよう、ログアウトとの間を少し空ける */}
+      <hashrock-switcher className="ml-2 text-slate-500" />
     </header>
   );
 }
