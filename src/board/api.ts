@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react'
 import type { Board } from './model'
 import { apply, getState, type Op, replaceBoard, setPersist, sizeOf } from './store'
 import { HUB_PATH, type ToolName, toolDefs, type WireMessage } from './tools'
@@ -41,6 +42,7 @@ function connectHub() {
     const send = (m: WireMessage) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
     ws.onopen = () => {
       retry = 1000
+      setStatus({ hub: true })
       setPersist((board) => send({ type: 'save', board }))
     }
     ws.onmessage = async (ev) => {
@@ -62,6 +64,7 @@ function connectHub() {
       }
     }
     ws.onclose = () => {
+      setStatus({ hub: false })
       setPersist(() => {})
       setTimeout(open, retry)
       retry = Math.min(retry * 2, 10000)
@@ -71,34 +74,75 @@ function connectHub() {
 }
 
 // ---------------------------------------------------------------------------
+// WebMCP: ブラウザ（またはブリッジ拡張）がページのツールを直接エージェントに渡す経路
+// https://developer.chrome.com/docs/ai/webmcp/imperative-api
 
 type ModelContext = {
-  registerTool(tool: {
-    name: string
-    description: string
-    inputSchema: object
-    execute: (input: unknown) => Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }>
-  }): unknown
+  registerTool(
+    tool: {
+      name: string
+      description: string
+      inputSchema: object
+      annotations?: { readOnlyHint?: boolean }
+      execute: (input: unknown, opts?: { signal?: AbortSignal }) => Promise<string>
+    },
+    opts?: { signal?: AbortSignal },
+  ): unknown
+}
+
+/** 仕様では document.modelContext。古い Chrome（〜149）や拡張は navigator.modelContext */
+function findModelContext(): ModelContext | undefined {
+  return (
+    (document as Document & { modelContext?: ModelContext }).modelContext ??
+    (navigator as Navigator & { modelContext?: ModelContext }).modelContext
+  )
+}
+
+let webMcpAbort: AbortController | undefined
+
+export async function registerWebMcp(mc = findModelContext()) {
+  if (!mc) return false
+  webMcpAbort?.abort()
+  const abort = (webMcpAbort = new AbortController())
+  for (const t of toolDefs) {
+    const execute = async (input: unknown) => {
+      // throw すると Chrome は理由を捨てて「invocation failed」だけを返すので、文字列で返す
+      try {
+        return JSON.stringify(await call(t.name, input))
+      } catch (e) {
+        return `error: ${(e as Error).message}`
+      }
+    }
+    await mc.registerTool({ ...t, execute }, { signal: abort.signal })
+  }
+  setStatus({ webmcp: true })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// 接続状態（画面の隅に表示する）
+
+type Status = { hub: boolean; webmcp: boolean }
+let status: Status = { hub: false, webmcp: false }
+const statusListeners = new Set<() => void>()
+
+function setStatus(next: Partial<Status>) {
+  status = { ...status, ...next }
+  statusListeners.forEach((l) => l())
+}
+
+export function useApiStatus() {
+  return useSyncExternalStore(
+    (l) => {
+      statusListeners.add(l)
+      return () => statusListeners.delete(l)
+    },
+    () => status,
+  )
 }
 
 export function installApi() {
   Object.assign(window, { jam: { getBoard, apply, call } })
-
   if (import.meta.env.DEV) connectHub()
-
-  // ブラウザが WebMCP に対応していれば、ページから直接ツールを公開する
-  const mc = (navigator as Navigator & { modelContext?: ModelContext }).modelContext
-  if (!mc) return
-  for (const t of toolDefs) {
-    mc.registerTool({
-      ...t,
-      execute: async (input) => {
-        try {
-          return { content: [{ type: 'text', text: JSON.stringify(await call(t.name, input)) }] }
-        } catch (e) {
-          return { content: [{ type: 'text', text: `error: ${(e as Error).message}` }], isError: true }
-        }
-      },
-    })
-  }
+  registerWebMcp().catch((e) => console.warn('[jam] WebMCP registration failed', e))
 }

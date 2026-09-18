@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { type MouseEvent, useCallback, useEffect, useMemo } from 'react'
+import { useApiStatus } from './board/api'
 import { FloatingEdge, type JamEdge } from './board/FloatingEdge'
 import { COLOR_NAMES, COLORS, DEFAULT_WIDTH, type El, type ElType } from './board/model'
 import { type ElNode, nodeTypes } from './board/nodes'
@@ -116,6 +117,26 @@ function Toolbar() {
       <span className="sep" />
       <button onClick={undo}>↶</button>
       <button onClick={redo}>↷</button>
+    </div>
+  )
+}
+
+function ConnectionStatus() {
+  const { hub, webmcp } = useApiStatus()
+  return (
+    <div className="status">
+      <span
+        className={webmcp ? 'on' : 'off'}
+        title={webmcp ? 'このページのツールを WebMCP で公開中' : 'WebMCP 非対応。chrome://flags/#enable-webmcp-testing を有効にすると使える'}
+      >
+        WebMCP
+      </span>
+      <span
+        className={hub ? 'on' : 'off'}
+        title={hub ? '開発サーバーと接続中（MCP ブリッジ・ファイル保存）' : '開発サーバーと未接続。変更はこのブラウザにだけ保存される'}
+      >
+        MCP ブリッジ
+      </span>
     </div>
   )
 }
@@ -250,6 +271,7 @@ function Canvas() {
         <MiniMap pannable zoomable />
       </ReactFlow>
       <Toolbar />
+      <ConnectionStatus />
     </div>
   )
 }

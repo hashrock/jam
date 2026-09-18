@@ -350,3 +350,44 @@ body,
 .react-flow__edge-path {
   stroke: var(--ink);
 }
+
+/* ---------------------------------------------------------------- status */
+
+.status {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 10;
+  font-size: 12px;
+}
+
+.status span {
+  padding: 2px 8px 2px 18px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
+  position: relative;
+  cursor: default;
+}
+
+.status span::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: #b3b3b3;
+}
+
+.status .on::before {
+  background: #3e9b4b;
+}
+
+.status .off {
+  color: var(--muted);
+}

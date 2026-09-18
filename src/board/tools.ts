@@ -34,6 +34,7 @@ export const toolDefs = [
     description:
       'Read the whole jam board: elements (id, type, parent, x/y relative to parent, w/h in px, content fields) and edges (from -> to).',
     inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
   },
   {
     name: 'apply',

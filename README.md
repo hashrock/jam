@@ -12,9 +12,28 @@ pnpm dev        # http://localhost:5199
 ブラウザで開いておくと、盤面は `board.jam.json` に保存される。別の場所に保存するなら `JAM_FILE=/path/to/repo/design.jam.json pnpm dev`。
 ファイルをエディタや git で書き換えると、開いているタブに反映される（座標を省いた要素は自動配置される）。
 
-## エージェントから使う（MCP）
+## エージェントから使う
 
-`mcp/server.ts` は stdio の MCP サーバーで、開発サーバー経由でブラウザのボードを操作する。Node 22.18 以上が必要（TypeScript をそのまま実行する）。
+経路は2つ。どちらも同じ `get_board` / `apply` を呼ぶ。画面右上のバッジで、どちらが有効か分かる。
+
+### A. WebMCP（ブラウザ標準）
+
+ページは `document.modelContext.registerTool()` でツールを公開している（古い Chrome の `navigator.modelContext` にも対応）。
+
+1. Chrome で `chrome://flags/#enable-webmcp-testing` を有効にする（Chrome 149 以降）
+2. 稼働中の Chrome に外から接続できるよう、`chrome://inspect/#remote-debugging` でリモートデバッグを有効にする
+3. Chrome DevTools MCP を WebMCP 付きで登録する
+
+```sh
+claude mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest --categoryExperimentalWebmcp=true --autoConnect
+```
+
+エージェントは `list_webmcp_tools` でページのツールを見つけ、`execute_webmcp_tool`（`input` は JSON 文字列）で呼ぶ。
+こちらは汎用の経路なので、エージェントは毎回ページとツールを探す手間がかかる。
+
+### B. jam 専用の MCP ブリッジ
+
+`mcp/server.ts` は stdio の MCP サーバーで、開発サーバー経由でブラウザのボードを操作する。ブラウザのフラグは不要で、`get_board` / `apply` がそのまま MCP のツールとして見える。Node 22.18 以上が必要（TypeScript をそのまま実行する）。
 
 Claude Code:
 
@@ -31,7 +50,6 @@ args = ["/path/to/jam/mcp/server.ts"]
 ```
 
 接続先を変えるときは環境変数 `JAM_URL`（既定 `http://localhost:5199`）。
-ブラウザが WebMCP（`navigator.modelContext`）に対応していれば、同じツールをページから直接公開する。
 
 ### ツール
 
