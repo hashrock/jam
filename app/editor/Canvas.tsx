@@ -8,14 +8,19 @@ import {
   type NodeChange,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { type MouseEvent, useCallback, useEffect, useMemo, useRef } from 'react'
+import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef } from 'react'
+import type { Pos } from '../board/layout'
 import { COLOR_NAMES, COLORS, DEFAULT_WIDTH, type El, type ElType } from '../board/model'
+import { pasteOps, serialize } from './clipboard'
 import { FloatingEdge, type JamEdge } from './FloatingEdge'
 import { type ElNode, nodeTypes } from './nodes'
 import {
+  absPos,
+  byId,
   connect,
   dropElements,
   getState,
@@ -24,6 +29,7 @@ import {
   setMeasured,
   setOverlay,
   setSelected,
+  sizeOf,
   tryCommit,
   undo,
   useBoardState,
@@ -31,6 +37,8 @@ import {
 import { registerWebMcp, useWebMcpAvailable } from './webmcp'
 
 const edgeTypes = { floating: FloatingEdge }
+
+const DRAG_TYPE = 'application/x-jam-tool'
 
 const TOOLS: { type: ElType; label: string; fields: Record<string, unknown> }[] = [
   { type: 'note', label: 'メモ', fields: { text: '' } },
@@ -42,9 +50,23 @@ const TOOLS: { type: ElType; label: string; fields: Record<string, unknown> }[] 
   { type: 'section', label: 'セクション', fields: { title: 'セクション', w: 640, h: 400 } },
 ]
 
-function isTyping(e: KeyboardEvent) {
-  const t = e.target as HTMLElement
-  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
+function isTyping(e: Event) {
+  const t = (e.target ?? document.activeElement) as HTMLElement | null
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+}
+
+/** その点を含む一番内側のセクション */
+function sectionAt(p: Pos): El | undefined {
+  const board = getState().board
+  const map = byId(board)
+  let hit: El | undefined
+  for (const e of board.elements) {
+    if (e.type !== 'section') continue
+    const a = absPos(e.id, map)
+    const s = sizeOf(e)
+    if (p.x >= a.x && p.x <= a.x + s.width && p.y >= a.y && p.y <= a.y + s.height) hit = e // 後ろほど深い
+  }
+  return hit
 }
 
 function select(ids: string[]) {
@@ -78,7 +100,16 @@ function Toolbar() {
   return (
     <div className="toolbar">
       {TOOLS.map((t) => (
-        <button key={t.type} onClick={() => create(t.type, t.fields)}>
+        <button
+          key={t.type}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData(DRAG_TYPE, t.type)
+            e.dataTransfer.effectAllowed = 'copy'
+          }}
+          onClick={() => create(t.type, t.fields)}
+          title="クリックで中央に、ドラッグで好きな場所に置く"
+        >
           {t.label}
         </button>
       ))}
@@ -171,6 +202,8 @@ function Canvas() {
   const measured = useBoardState((s) => s.measured)
   const loaded = useBoardState((s) => s.loaded)
   const { screenToFlowPosition, fitView } = useReactFlow()
+  const pointer = useRef<{ x: number; y: number } | null>(null)
+  const selectionStart = useRef<{ x: number; y: number } | null>(null)
 
   // 最初の盤面が届いたら全体を表示する
   useEffect(() => {
@@ -229,6 +262,88 @@ function Canvas() {
     onSelect(changes.flatMap((c) => (c.type === 'select' ? [c] : [])))
   }, [])
 
+  const onDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  // ツールバーからドラッグ＆ドロップで置く。セクションの上なら中に入れる
+  const onDrop = (e: DragEvent) => {
+    const type = e.dataTransfer.getData(DRAG_TYPE) as ElType
+    const tool = TOOLS.find((t) => t.type === type)
+    if (!tool) return
+    e.preventDefault()
+    const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+    const w = type === 'section' ? 640 : DEFAULT_WIDTH[type] || 120
+    const parent = type === 'section' ? undefined : sectionAt(p)
+    const origin = parent ? absPos(parent.id, byId(getState().board)) : { x: 0, y: 0 }
+    select(
+      tryCommit([
+        {
+          op: 'create',
+          type,
+          ...tool.fields,
+          parent: parent?.id,
+          x: Math.round(p.x - origin.x - w / 2),
+          y: Math.round(p.y - origin.y - 20),
+        },
+      ]),
+    )
+  }
+
+  // 範囲選択は触れた要素を選ぶが、セクションは丸ごと囲んだときだけ選ぶ（中で始めた範囲選択でセクション自体を掴まない）
+  const onSelectionEnd = (e: MouseEvent) => {
+    const start = selectionStart.current
+    selectionStart.current = null
+    if (!start) return
+    const a = screenToFlowPosition(start)
+    const b = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+    const [x1, x2, y1, y2] = [Math.min(a.x, b.x), Math.max(a.x, b.x), Math.min(a.y, b.y), Math.max(a.y, b.y)]
+    const { board, selected } = getState()
+    const map = byId(board)
+    const next = [...selected].filter((id) => {
+      const el = map.get(id)
+      if (el?.type !== 'section') return true
+      const p = absPos(id, map)
+      const s = sizeOf(el)
+      return p.x >= x1 && p.y >= y1 && p.x + s.width <= x2 && p.y + s.height <= y2
+    })
+    if (next.length !== selected.size) setSelected(next)
+  }
+
+  // コピー・カット・貼り付け
+  useEffect(() => {
+    const copy = (e: ClipboardEvent) => {
+      if (isTyping(e)) return
+      const text = serialize(getState().board, getState().selected)
+      if (!text) return
+      e.preventDefault()
+      e.clipboardData?.setData('text/plain', text)
+      if (e.type === 'cut') tryCommit([...getState().selected].map((id) => ({ op: 'delete' as const, id })))
+    }
+    const paste = (e: ClipboardEvent) => {
+      if (isTyping(e)) return
+      const text = e.clipboardData?.getData('text/plain')
+      if (!text) return
+      e.preventDefault()
+      // マウスがキャンバス上にあればその位置、無ければ画面中央に貼る
+      const at = screenToFlowPosition(pointer.current ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      const { ops, roots } = pasteOps(text, getState().board, at)
+      if (!ops.length) return
+      tryCommit(ops)
+      setSelected(roots)
+    }
+    document.addEventListener('copy', copy)
+    document.addEventListener('cut', copy)
+    document.addEventListener('paste', paste)
+    return () => {
+      document.removeEventListener('copy', copy)
+      document.removeEventListener('cut', copy)
+      document.removeEventListener('paste', paste)
+    }
+  }, [screenToFlowPosition])
+
   const onPaneDoubleClick = (e: MouseEvent) => {
     if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
     const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
@@ -256,7 +371,18 @@ function Canvas() {
   }, [])
 
   return (
-    <div className="canvas" onDoubleClick={onPaneDoubleClick}>
+    <div
+      className="canvas"
+      onDoubleClick={onPaneDoubleClick}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onPointerMove={(e) => {
+        pointer.current = { x: e.clientX, y: e.clientY }
+      }}
+      onPointerLeave={() => {
+        pointer.current = null
+      }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -282,9 +408,19 @@ function Canvas() {
           if (to && to !== conn.fromNode.id) tryCommit([{ op: 'connect', from: conn.fromNode.id, to }])
         }}
         onDelete={({ nodes, edges }) => tryCommit([...nodes, ...edges].map((n) => ({ op: 'delete' as const, id: n.id })))}
+        onSelectionStart={(e) => {
+          selectionStart.current = { x: e.clientX, y: e.clientY }
+        }}
+        onSelectionEnd={onSelectionEnd}
         connectionMode={ConnectionMode.Loose}
         deleteKeyCode={['Backspace', 'Delete']}
         multiSelectionKeyCode={['Meta', 'Shift']}
+        // FigJam と同じ: 左ドラッグは範囲選択、パンは中ボタン / Space + ドラッグ / 2本指スクロール、⌘・Ctrl + スクロールでズーム
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
+        panOnDrag={[1]}
+        panOnScroll
+        zoomActivationKeyCode={['Meta', 'Control']}
         zoomOnDoubleClick={false}
         minZoom={0.1}
       >
