@@ -1,10 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "jam",
+  "account_id": "1705822b8e7fa963d60ac9855493cbfb",
   "main": "./app/server.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "routes": [{ "pattern": "jam.hashrock.info", "custom_domain": true }],
+  "workers_dev": false,
   "d1_databases": [
     {
       "binding": "DB",
