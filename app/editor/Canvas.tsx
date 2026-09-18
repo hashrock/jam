@@ -11,7 +11,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef } from 'react'
+import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_WIDTH, type El, type ElType } from '../board/model'
 import type { SessionUser } from '../user'
 import { BoardMenu, ConnectionStatus, DRAG_TYPE, ELEMENT_TOOLS, placeElement, SelectionBar, Toolbar } from './chrome'
@@ -76,6 +76,27 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
   const { screenToFlowPosition, fitView } = useReactFlow()
   const pointer = useRef<{ x: number; y: number } | null>(null)
   const selectionStart = useRef<{ x: number; y: number } | null>(null)
+  // カーソル用: Space を押している間（ドラッグでパンできる）と、ドラッグでパンしている最中
+  const [space, setSpace] = useState(false)
+  const [panning, setPanning] = useState(false)
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !isTyping(e)) setSpace(true)
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpace(false)
+    }
+    const reset = () => setSpace(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', reset)
+    }
+  }, [])
 
   // 最初の盤面が届いたら全体を表示する
   useEffect(() => {
@@ -243,7 +264,14 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
 
   return (
     <div
-      className={`canvas tool-${tool === 'select' || tool === 'hand' ? tool : 'place'}`}
+      className={[
+        'canvas',
+        `tool-${tool === 'select' || tool === 'hand' ? tool : 'place'}`,
+        space && 'space-pan',
+        panning && 'panning',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       onDoubleClick={onPaneDoubleClick}
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -268,6 +296,11 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
           dragging.current = false
           dropElements(dragged.map((n) => n.id))
         }}
+        // ホイールでのパンでは手のひらにしない。ボタンを押したドラッグのときだけ
+        onMoveStart={(e) => {
+          if (e && 'button' in e) setPanning(true)
+        }}
+        onMoveEnd={() => setPanning(false)}
         onPaneClick={placeAt}
         onNodeClick={(e) => placeAt(e)}
         onNodeDoubleClick={(_, n) => setEditing(n.id)}
