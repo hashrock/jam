@@ -10,11 +10,15 @@ import { findUserByEmail, insertUser } from "./utils/userRepository";
 import { hashToken } from "./utils/tokenHash";
 import { createBoard, deleteBoard, listBoards, loadOwnedBoard, room } from "./boards";
 import { handleMcp } from "./mcp";
+import { statsApp } from "./stats";
 import type { Env } from "./global.d";
 
 export { BoardRoom } from "./room";
 
 const app = new Hono<Env>();
+
+// サインアップ数（STATS_TOKEN の Bearer だけで認証）。認証ミドルウェアより前に置く
+app.route("/api/stats", statsApp());
 
 app.use("*", authMiddleware(selectAuth));
 app.use(inertia({ rootView }));
