@@ -14,7 +14,7 @@ Element types and fields:
 - section {title}         container; put related items inside via parent
 - note    {text}          markdown-lite: "# heading", "- bullet", **bold**, \`code\`, URLs
 - task    {text, done}    TODO item with checkbox
-- link    {url, title}    issue / PR / doc link
+- link    {url, title}    issue / PR / doc link (url must be http:// or https://)
 - box     {text, shape}   diagram node; shape: rect | round | ellipse | diamond | db
 - code    {code, lang}
 - text    {text, size}    heading/label without background; size: sm | md | lg | xl

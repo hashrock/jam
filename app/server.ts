@@ -53,6 +53,9 @@ app.all("/mcp", handleMcp);
 
 // --- Board realtime channel: the tab ⇔ BoardRoom WebSocket ---
 app.get("/api/boards/:id/ws", async (c) => {
+  // 他のサイトのページから WebSocket を開かせない（Cookie が付いてしまうのを防ぐ）
+  const origin = c.req.header("Origin");
+  if (origin && origin !== new URL(c.req.url).origin) return c.text("Forbidden origin", 403);
   const user = c.get("user");
   if (!user) return c.text("Unauthorized", 401);
   const id = c.req.param("id");

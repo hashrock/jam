@@ -8,6 +8,7 @@ import {
 } from '@xyflow/react'
 import { type KeyboardEvent, type ReactNode, useState } from 'react'
 import { COLORS, DEFAULT_COLOR, type El } from '../board/model'
+import { isWebUrl } from '../board/ops'
 import { commitOverlay, setEditing, setOverlay, tryCommit, useBoardState } from './store'
 
 export type ElNode = Node<{ el: El }>
@@ -169,7 +170,11 @@ function TaskNode({ data: { el }, selected }: NodeProps<ElNode>) {
 
 function LinkEditor({ el }: { el: El & { type: 'link' } }) {
   const [draft, setDraft] = useState({ title: el.title ?? '', url: el.url })
-  const done = () => commit(el.id, draft)
+  // 「example.com/foo」のようにスキームを省いたら https:// を補う
+  const done = () => {
+    const url = draft.url.trim()
+    commit(el.id, { ...draft, url: url && !/^[a-z][a-z0-9+.-]*:/i.test(url) ? `https://${url}` : url })
+  }
   return (
     <div
       className="link-form nodrag"
@@ -201,7 +206,7 @@ function LinkNode({ data: { el }, selected }: NodeProps<ElNode>) {
         <>
           <div className="link-title">{el.title || host || 'ダブルクリックで編集'}</div>
           {el.url && (
-            <a className="link-url nodrag" href={el.url} target="_blank" rel="noreferrer">
+            <a className="link-url nodrag" href={isWebUrl(el.url) ? el.url : undefined} target="_blank" rel="noreferrer">
               {host}
             </a>
           )}

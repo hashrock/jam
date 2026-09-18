@@ -106,9 +106,14 @@ export function withIds(board: Board, ops: Op[]): Op[] {
   })
 }
 
+/** リンクとして開いてよい URL か（javascript: などを入れさせない） */
+export const isWebUrl = (url: string) => /^https?:\/\//i.test(url)
+
 function validate(el: El, map: Map<string, El>, all: El[]) {
   if (el.color && !COLOR_NAMES.includes(el.color as Color))
     throw new Error(`unknown color "${el.color}". use one of: ${COLOR_NAMES.join(', ')}`)
+  if (el.type === 'link' && el.url && !isWebUrl(el.url))
+    throw new Error(`url must start with http:// or https:// (got "${el.url}")`)
   if (el.parent != null) {
     const p = map.get(el.parent)
     if (!p || p.type !== 'section') throw new Error(`parent "${el.parent}" is not a section`)
