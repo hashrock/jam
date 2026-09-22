@@ -14,7 +14,7 @@ import '@xyflow/react/dist/style.css'
 import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_WIDTH, type El, type ElType } from '../board/model'
 import type { SessionUser } from '../user'
-import { BoardMenu, ConnectionStatus, DRAG_TYPE, ELEMENT_TOOLS, placeElement, SelectionBar, Toolbar } from './chrome'
+import { BoardMenu, ConnectionStatus, DRAG_TYPE, ELEMENT_TOOLS, placeElement, SelectionBar, Toolbar, ViewerPill } from './chrome'
 import { pasteOps, serialize } from './clipboard'
 import { FloatingEdge, type JamEdge } from './FloatingEdge'
 import { type ElNode, nodeTypes } from './nodes'
@@ -68,6 +68,7 @@ function toNode(raw: El, overlay: object | undefined, selected: boolean, measure
 
 function Canvas({ menu }: { menu: React.ReactNode }) {
   const board = useBoardState((s) => s.board)
+  const readOnly = useBoardState((s) => s.readOnly)
   const overlay = useBoardState((s) => s.overlay)
   const selected = useBoardState((s) => s.selected)
   const measured = useBoardState((s) => s.measured)
@@ -163,6 +164,7 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
 
   // ツールバーからドラッグ＆ドロップで置く。セクションの上なら中に入れる
   const onDrop = (e: DragEvent) => {
+    if (readOnly) return
     const type = e.dataTransfer.getData(DRAG_TYPE) as ElType
     if (!ELEMENT_TOOLS.some((t) => t.type === type)) return
     e.preventDefault()
@@ -172,6 +174,7 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
 
   // 要素のツールを選んだ後のクリックで、その場所に置いて選択ツールに戻る（FigJam と同じ）
   const placeAt = (e: MouseEvent) => {
+    if (readOnly) return false
     const t = getState().tool
     if (t === 'select' || t === 'hand') return false
     placeElement(t, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
@@ -207,10 +210,10 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
       if (!text) return
       e.preventDefault()
       e.clipboardData?.setData('text/plain', text)
-      if (e.type === 'cut') tryCommit([...getState().selected].map((id) => ({ op: 'delete' as const, id })))
+      if (e.type === 'cut' && !readOnly) tryCommit([...getState().selected].map((id) => ({ op: 'delete' as const, id })))
     }
     const paste = (e: ClipboardEvent) => {
-      if (isTyping(e)) return
+      if (isTyping(e) || readOnly) return
       const text = e.clipboardData?.getData('text/plain')
       if (!text) return
       e.preventDefault()
@@ -229,16 +232,20 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
       document.removeEventListener('cut', copy)
       document.removeEventListener('paste', paste)
     }
-  }, [screenToFlowPosition])
+  }, [screenToFlowPosition, readOnly])
 
   const onPaneDoubleClick = (e: MouseEvent) => {
-    if (!(e.target as HTMLElement).classList.contains('react-flow__pane') || getState().tool !== 'select') return
+    if (readOnly || !(e.target as HTMLElement).classList.contains('react-flow__pane') || getState().tool !== 'select') return
     placeElement('note', screenToFlowPosition({ x: e.clientX, y: e.clientY }))
   }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e)) return
+      if (readOnly) {
+        if (e.shiftKey && e.key === '!') void fitView({ padding: 0.1, duration: 200 })
+        return
+      }
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -260,13 +267,14 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [fitView])
+  }, [fitView, readOnly])
 
   return (
     <div
       className={[
         'canvas',
         `tool-${tool === 'select' || tool === 'hand' ? tool : 'place'}`,
+        readOnly && 'read-only',
         space && 'space-pan',
         panning && 'panning',
       ]
@@ -303,8 +311,8 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
         onMoveEnd={() => setPanning(false)}
         onPaneClick={placeAt}
         onNodeClick={(e) => placeAt(e)}
-        onNodeDoubleClick={(_, n) => setEditing(n.id)}
-        onEdgeDoubleClick={(_, e) => setEditing(e.id)}
+        onNodeDoubleClick={(_, n) => !readOnly && setEditing(n.id)}
+        onEdgeDoubleClick={(_, e) => !readOnly && setEditing(e.id)}
         onConnect={(c) => tryCommit([{ op: 'connect', from: c.source, to: c.target }])}
         onConnectEnd={(e, conn) => {
           // ハンドルではなくノード本体の上で離しても接続する
@@ -323,12 +331,16 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
         multiSelectionKeyCode={['Meta', 'Shift']}
         // FigJam と同じ: 左ドラッグは範囲選択、パンは中ボタン / Space + ドラッグ / 2本指スクロール / 手のひらツール、
         // ⌘・Ctrl + スクロールでズーム
-        selectionOnDrag={tool === 'select'}
+        selectionOnDrag={!readOnly && tool === 'select'}
         selectionMode={SelectionMode.Partial}
-        panOnDrag={tool === 'hand' ? [0, 1] : [1]}
-        nodesDraggable={tool === 'select'}
-        nodesConnectable={tool === 'select'}
-        elementsSelectable={tool !== 'hand'}
+        // 閲覧だけのときは、左ドラッグでそのまま見て回れるようにする
+        panOnDrag={readOnly || tool === 'hand' ? [0, 1] : [1]}
+        nodesDraggable={!readOnly && tool === 'select'}
+        nodesConnectable={!readOnly && tool === 'select'}
+        elementsSelectable={!readOnly && tool !== 'hand'}
+        // 閲覧だけのときはフォーカス枠も出さない（触れる物に見せない）
+        nodesFocusable={!readOnly}
+        edgesFocusable={!readOnly}
         panOnScroll
         zoomActivationKeyCode={['Meta', 'Control']}
         zoomOnDoubleClick={false}
@@ -336,30 +348,55 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
       >
         <Background gap={24} />
         <Controls position="bottom-right" showInteractive={false} />
-        <SelectionBar />
+        {!readOnly && <SelectionBar />}
       </ReactFlow>
       {menu}
-      <Toolbar />
+      {!readOnly && <Toolbar />}
       <ConnectionStatus />
     </div>
   )
 }
 
+function Closed({ message, home }: { message: string; home: { href: string; label: string } }) {
+  return (
+    <div className="closed">
+      {message}
+      <a href={home.href}>{home.label}</a>
+    </div>
+  )
+}
+
 /** ボードを開いて編集する。サーバーとの接続と WebMCP の登録もここで行う */
-export default function BoardEditor({ boardId, title, user }: { boardId: string; title: string; user: SessionUser }) {
-  useEffect(() => connect(boardId), [boardId])
+export default function BoardEditor({
+  boardId,
+  title,
+  user,
+  publicId,
+}: {
+  boardId: string
+  title: string
+  user: SessionUser
+  publicId: string | null
+}) {
+  useEffect(() => connect(`/api/boards/${boardId}/ws`), [boardId])
   useEffect(() => registerWebMcp(), [boardId])
   const closed = useBoardState((s) => s.closed)
-  if (closed)
-    return (
-      <div className="closed">
-        {closed}
-        <a href="/boards">ボード一覧へ</a>
-      </div>
-    )
+  if (closed) return <Closed message={closed} home={{ href: '/boards', label: 'ボード一覧へ' }} />
   return (
     <ReactFlowProvider>
-      <Canvas menu={<BoardMenu boardId={boardId} title={title} user={user} />} />
+      <Canvas menu={<BoardMenu boardId={boardId} title={title} user={user} publicId={publicId} />} />
+    </ReactFlowProvider>
+  )
+}
+
+/** 共有リンクで開いた閲覧専用のボード。編集はできないが、変更はそのまま流れてくる */
+export function BoardViewer({ publicId, title }: { publicId: string; title: string }) {
+  useEffect(() => connect(`/api/public/${publicId}/ws`, { readOnly: true }), [publicId])
+  const closed = useBoardState((s) => s.closed)
+  if (closed) return <Closed message={closed} home={{ href: '/', label: 'jam について' }} />
+  return (
+    <ReactFlowProvider>
+      <Canvas menu={<ViewerPill title={title} />} />
     </ReactFlowProvider>
   )
 }

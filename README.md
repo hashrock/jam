@@ -16,7 +16,7 @@ app/
   server.ts            Hono アプリ（ページ、認証、API、/mcp）。BoardRoom を export する
   room.ts              BoardRoom（Durable Object）: 盤面の正本、WebSocket、自動配置の予備
   mcp.ts               リモート MCP（Streamable HTTP, ステートレス）
-  boards.ts            D1 のボード一覧と BoardRoom をまたぐ操作
+  boards.ts            D1 のボード一覧と BoardRoom をまたぐ操作（公開リンクの発行もここ）
   board/               ブラウザとサーバーで共有する純粋なロジック
     model.ts           要素の型と色
     ops.ts             操作の適用（applyOps）と差分
@@ -119,6 +119,22 @@ claude mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest --categoryEx
 
 1回の `apply` が1つの undo 単位。1つでも不正な操作があれば何も変更せず、どの操作が何故だめかを返す。
 
+## 公開（共有リンク）
+
+ボード画面の左上メニューから「公開…」を選ぶと共有リンク（`/p/<ランダムな id>`）が出る。
+リンクを知っている人は、ログイン無しでそのボードを **閲覧だけ** できる。
+
+- 見え方は編集画面と同じで、手やエージェントの変更もその場で流れる（読むだけの WebSocket でつなぐ）
+- 閲覧側はツールバーも選択も編集も無い。サーバー側でも書き込みは弾く
+- 「公開をやめる」でリンクは無効になり、開いたままの閲覧タブもその場で切れる
+- 公開し直すと新しいリンクになる（前のリンクでは見られない）
+
+| | |
+| --- | --- |
+| `POST /api/boards/:id/publish` | 公開する（すでに公開中ならリンクはそのまま）。`{ publicId, url }` |
+| `DELETE /api/boards/:id/publish` | 公開をやめる |
+| `GET /p/:publicId` | 共有リンクの閲覧ページ（ログイン不要） |
+
 ## 手での操作
 
 - 余白をダブルクリックでメモ、ツールバーから各要素を追加（セクション選択中ならその中に追加）
@@ -126,6 +142,7 @@ claude mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest --categoryEx
 - ドラッグで移動。セクションに落とすと中に入る
 - ハンドルから相手のノードへドラッグして矢印を引く。矢印のダブルクリックでラベル編集
 - ⌘Z / ⇧⌘Z で undo / redo。エージェントの変更も戻せる。他のタブでの変更は巻き戻さない（履歴は変更した要素の差分だけを持つ）
+- 公開中のボードは左上に「公開中」が出る。押すと共有リンクのパネルが開く
 
 ## ライセンス
 

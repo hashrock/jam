@@ -8,7 +8,16 @@ import { apiTokens, boards, users } from "./db/schema";
 import { authMiddleware, selectAuth } from "./auth";
 import { findUserByEmail, insertUser } from "./utils/userRepository";
 import { hashToken } from "./utils/tokenHash";
-import { createBoard, deleteBoard, listBoards, loadOwnedBoard, room } from "./boards";
+import {
+  createBoard,
+  deleteBoard,
+  listBoards,
+  loadOwnedBoard,
+  loadPublicBoard,
+  publicBoardUrl,
+  room,
+  setBoardPublic,
+} from "./boards";
 import { handleMcp } from "./mcp";
 import { statsApp } from "./stats";
 import type { Env } from "./global.d";
@@ -66,6 +75,39 @@ app.get("/api/boards/:id/ws", async (c) => {
   if (!(await loadOwnedBoard(c.env, id, user.id))) return c.text("Not found", 404);
   if (c.req.header("Upgrade") !== "websocket") return c.text("Expected websocket", 426);
   return room(c.env, id).fetch(c.req.raw);
+});
+
+// 公開リンクからの閲覧専用チャンネル（ログイン不要。盤面は届くが、こちらからは変えられない）
+app.get("/api/public/:publicId/ws", async (c) => {
+  const origin = c.req.header("Origin");
+  if (origin && origin !== new URL(c.req.url).origin) return c.text("Forbidden origin", 403);
+  const board = await loadPublicBoard(c.env, c.req.param("publicId"));
+  if (!board) return c.text("Not found", 404);
+  if (c.req.header("Upgrade") !== "websocket") return c.text("Expected websocket", 426);
+  const url = new URL(c.req.url);
+  url.searchParams.set("mode", "view");
+  return room(c.env, board.id).fetch(new Request(url, c.req.raw));
+});
+
+// --- 公開（共有リンク） ---
+app.post("/api/boards/:id/publish", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  const id = c.req.param("id");
+  const board = await loadOwnedBoard(c.env, id, user.id);
+  if (!board) return c.json({ error: "Not found" }, 404);
+  // すでに公開中ならリンクは変えない
+  const publicId = board.publicId ?? (await setBoardPublic(c.env, id, true))!;
+  return c.json({ publicId, url: publicBoardUrl(new URL(c.req.url).origin, publicId) });
+});
+
+app.delete("/api/boards/:id/publish", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  const id = c.req.param("id");
+  if (!(await loadOwnedBoard(c.env, id, user.id))) return c.json({ error: "Not found" }, 404);
+  await setBoardPublic(c.env, id, false);
+  return c.json({ ok: true });
 });
 
 app.patch("/api/boards/:id", async (c) => {
@@ -138,7 +180,14 @@ const routes = app
     if (!user) return c.redirect("/");
     const board = await loadOwnedBoard(c.env, c.req.param("id"), user.id);
     if (!board) return c.notFound();
-    return c.render("Boards/Show", { user, board: { id: board.id, title: board.title } });
+    return c.render("Boards/Show", { user, board: { id: board.id, title: board.title, publicId: board.publicId } });
+  })
+  // 共有リンク。ログインしていなくても閲覧できる（編集はできない）
+  .get("/p/:publicId", async (c) => {
+    const publicId = c.req.param("publicId");
+    const board = await loadPublicBoard(c.env, publicId);
+    if (!board) return c.notFound();
+    return c.render("Boards/Public", { board: { publicId, title: board.title } });
   })
   .get("/settings", async (c) => {
     const user = c.get("user");

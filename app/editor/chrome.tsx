@@ -2,8 +2,10 @@
 import { router } from '@inertiajs/react'
 import { NodeToolbar, Position, useReactFlow } from '@xyflow/react'
 import {
+  Check,
   ChevronDown,
   Code,
+  Copy,
   Hand,
   LayoutGrid,
   Link as LinkIcon,
@@ -266,19 +268,94 @@ function TitleInput({ boardId, initial }: { boardId: string; initial: string }) 
   )
 }
 
-export function BoardMenu({ boardId, title, user }: { boardId: string; title: string; user: SessionUser }) {
+/**
+ * 公開（共有リンク）。リンクを知っている人だけがログイン無しで閲覧できる。
+ * 公開をやめるとリンクは無効になり、開いたままの閲覧タブもその場で切れる
+ */
+function SharePanel({ boardId, publicId, onChange, onClose }: { boardId: string; publicId: string | null; onChange: (v: string | null) => void; onClose: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const url = publicId ? `${location.origin}/p/${publicId}` : ''
+
+  const publish = async () => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/boards/${boardId}/publish`, { method: 'POST' })
+      if (res.ok) onChange(((await res.json()) as { publicId: string }).publicId)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unpublish = async () => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/boards/${boardId}/publish`, { method: 'DELETE' })
+      if (res.ok) onChange(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(url).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="menu share">
+      <div className="menu-user">公開（共有リンク）</div>
+      {publicId ? (
+        <>
+          <p className="share-note">リンクを知っている人なら、ログイン無しで閲覧できます。編集はできません。</p>
+          <div className="share-link">
+            <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} aria-label="共有リンク" />
+            <button onClick={copy} title="リンクをコピー">
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+          </div>
+          <a className="share-open" href={url} target="_blank" rel="noreferrer">
+            公開ページを開く
+          </a>
+          <hr />
+          <button disabled={busy} onClick={unpublish}>
+            <span>公開をやめる</span>
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="share-note">公開すると、リンクを知っている人が閲覧だけできるようになります。</p>
+          <button disabled={busy} onClick={publish}>
+            <span>公開する</span>
+          </button>
+        </>
+      )}
+      <hr />
+      <button onClick={onClose}>
+        <span>閉じる</span>
+      </button>
+    </div>
+  )
+}
+
+export function BoardMenu({ boardId, title, user, publicId: initialPublicId }: { boardId: string; title: string; user: SessionUser; publicId: string | null }) {
   const [open, setOpen] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const [publicId, setPublicId] = useState(initialPublicId)
   const ref = useRef<HTMLDivElement>(null)
   const { fitView } = useReactFlow()
 
   useEffect(() => {
-    if (!open) return
+    if (!open && !sharing) return
     const close = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+      if (ref.current?.contains(e.target as Node)) return
+      setOpen(false)
+      setSharing(false)
     }
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
-  }, [open])
+  }, [open, sharing])
 
   const item = (label: string, onClick: () => void, hint?: string) => (
     <button
@@ -294,11 +371,23 @@ export function BoardMenu({ boardId, title, user }: { boardId: string; title: st
 
   return (
     <div className="pill" ref={ref}>
-      <button className={`pill-logo ${open ? 'open' : ''}`} onClick={() => setOpen(!open)} title="メニュー">
+      <button
+        className={`pill-logo ${open ? 'open' : ''}`}
+        onClick={() => {
+          setSharing(false)
+          setOpen(!open)
+        }}
+        title="メニュー"
+      >
         <img src="/logo.svg" alt="jam" width={22} height={22} />
         <ChevronDown size={14} />
       </button>
       <TitleInput boardId={boardId} initial={title} />
+      {publicId && (
+        <button className="pill-badge" title="公開中。メニューの「公開」からやめられる" onClick={() => { setOpen(false); setSharing(true) }}>
+          公開中
+        </button>
+      )}
       {open && (
         <div className="menu">
           <div className="menu-user">{user.name || user.email}</div>
@@ -310,10 +399,28 @@ export function BoardMenu({ boardId, title, user }: { boardId: string; title: st
           {item('全体を表示', () => void fitView({ padding: 0.1, duration: 200 }), '⇧1')}
           {item('全体を整列', () => tryCommit([{ op: 'layout', mode: 'grid' }]))}
           <hr />
+          {item(publicId ? '公開中のリンク…' : '公開…', () => setSharing(true))}
           {item('設定', () => router.visit('/settings'))}
           {item('ログアウト', () => window.location.assign('/auth/logout'))}
         </div>
       )}
+      {sharing && <SharePanel boardId={boardId} publicId={publicId} onChange={setPublicId} onClose={() => setSharing(false)} />}
+    </div>
+  )
+}
+
+/** 共有リンクで開いたときの左上。編集する物が無いので、ボード名と「閲覧のみ」だけ出す */
+export function ViewerPill({ title }: { title: string }) {
+  useEffect(() => {
+    document.title = `${title} - jam`
+  }, [title])
+  return (
+    <div className="pill">
+      <a className="pill-logo" href="/" title="jam">
+        <img src="/logo.svg" alt="jam" width={22} height={22} />
+      </a>
+      <span className="pill-title view">{title}</span>
+      <span className="pill-badge">閲覧のみ</span>
     </div>
   )
 }
@@ -323,18 +430,21 @@ export function BoardMenu({ boardId, title, user }: { boardId: string; title: st
 
 export function ConnectionStatus() {
   const connected = useBoardState((s) => s.connected)
+  const readOnly = useBoardState((s) => s.readOnly)
   const webmcp = useWebMcpAvailable()
   return (
     <div className="status">
       <span className={connected ? 'on' : 'off'} title={connected ? 'サーバーと同期中' : '再接続中。変更は接続し直したときに送られる'}>
         {connected ? '同期中' : 'オフライン'}
       </span>
+      {!readOnly && (
       <span
         className={webmcp ? 'on' : 'off'}
         title={webmcp ? 'このボードのツールを WebMCP で公開中' : 'WebMCP 非対応。chrome://flags/#enable-webmcp-testing を有効にすると使える'}
       >
         WebMCP
       </span>
+      )}
       {/* ボード画面はヘッダーが無いので、右上の状態表示の右端に置く。
           Shadow DOM 内のキー入力は host が target に見えて isTyping をすり抜け、
           Backspace で選択中の要素が消えるなどエディタのショートカットに化けるので、ここで止める */}

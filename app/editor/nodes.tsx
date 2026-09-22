@@ -93,6 +93,7 @@ function TextEditor({ value, onDone, className }: { value: string; onDone: (v: s
 
 function EditableText({ el, field, md }: { el: El; field: 'text' | 'title' | 'code'; md?: boolean }) {
   const editing = useEditing(el.id)
+  const readOnly = useBoardState((s) => s.readOnly)
   const value = ((el as Record<string, unknown>)[field] as string | undefined) ?? ''
   if (editing)
     return (
@@ -103,7 +104,7 @@ function EditableText({ el, field, md }: { el: El; field: 'text' | 'title' | 'co
       />
     )
   if (field === 'code') return <pre className="code-body">{value}</pre>
-  if (!value) return <div className="placeholder">ダブルクリックで編集</div>
+  if (!value) return <div className="placeholder">{readOnly ? '' : 'ダブルクリックで編集'}</div>
   return md ? <Markdown text={value} /> : <div className="plain">{value}</div>
 }
 
@@ -151,6 +152,7 @@ function NoteNode({ data: { el }, selected }: NodeProps<ElNode>) {
 }
 
 function TaskNode({ data: { el }, selected }: NodeProps<ElNode>) {
+  const readOnly = useBoardState((s) => s.readOnly)
   if (el.type !== 'task') return null
   const c = colorOf(el)
   return (
@@ -159,6 +161,7 @@ function TaskNode({ data: { el }, selected }: NodeProps<ElNode>) {
         type="checkbox"
         className="nodrag"
         checked={!!el.done}
+        disabled={readOnly}
         onChange={(e) => tryCommit([{ op: 'update', id: el.id, done: e.target.checked }])}
       />
       <EditableText el={el} field="text" md />
@@ -189,6 +192,7 @@ function LinkEditor({ el }: { el: El & { type: 'link' } }) {
 
 function LinkNode({ data: { el }, selected }: NodeProps<ElNode>) {
   const editing = useEditing(el.id)
+  const readOnly = useBoardState((s) => s.readOnly)
   if (el.type !== 'link') return null
   const c = colorOf(el)
   let host = el.url
@@ -204,7 +208,7 @@ function LinkNode({ data: { el }, selected }: NodeProps<ElNode>) {
         <LinkEditor el={el} />
       ) : (
         <>
-          <div className="link-title">{el.title || host || 'ダブルクリックで編集'}</div>
+          <div className="link-title">{el.title || host || (readOnly ? '' : 'ダブルクリックで編集')}</div>
           {el.url && (
             <a className="link-url nodrag" href={isWebUrl(el.url) ? el.url : undefined} target="_blank" rel="noreferrer">
               {host}
