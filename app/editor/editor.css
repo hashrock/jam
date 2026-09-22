@@ -201,6 +201,33 @@
   background: #fff;
 }
 
+/* 公開中の印（左上）と、共有リンクで開いたときの「閲覧のみ」 */
+.pill-badge {
+  height: 24px;
+  padding: 0 10px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: #e8f7ec;
+  color: #2e7d3a;
+  font: 600 12px var(--sans);
+  white-space: nowrap;
+}
+
+.pill-badge:hover {
+  background: #d7f0de;
+}
+
+.pill-title.view {
+  display: block;
+  padding: 0 8px;
+  font: 600 14px/32px var(--sans);
+  max-width: min(420px, calc(100vw - 300px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -248,6 +275,72 @@
   padding: 6px 10px 8px;
   color: rgb(255 255 255 / 0.55);
   font-size: 12px;
+}
+
+/* 公開（共有リンク）のパネル。メニューと同じ見た目で、左上のピルの下に出す */
+.share {
+  width: 300px;
+}
+
+.share-note {
+  margin: 0 0 8px;
+  padding: 0 10px;
+  color: rgb(255 255 255 / 0.65);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.share-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 4px 6px;
+}
+
+.share-link input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  outline: 0;
+  background: rgb(255 255 255 / 0.1);
+  color: #fff;
+  font: inherit;
+}
+
+.share-link button {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.1);
+  color: #fff;
+}
+
+.share-link button:hover {
+  background: var(--tool-active);
+}
+
+.share-open {
+  display: block;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: rgb(255 255 255 / 0.75);
+  font-size: 13px;
+}
+
+.share-open:hover {
+  background: var(--tool-active);
+  color: #fff;
+}
+
+.share button:disabled {
+  opacity: 0.5;
 }
 
 /* 選択中の要素の上に出るバー */
@@ -608,6 +701,16 @@
 }
 .canvas .react-flow__edge-path {
   stroke: var(--ink);
+}
+
+/* 閲覧のみ（共有リンク）: 矢印を引くハンドルは出さず、ドラッグはパンにする */
+.canvas.read-only .react-flow__handle {
+  display: none;
+}
+
+.canvas.read-only .react-flow__pane,
+.canvas.read-only .react-flow__node {
+  cursor: grab;
 }
 
 /* ---------------------------------------------------------------- status */

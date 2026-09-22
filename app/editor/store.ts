@@ -26,6 +26,8 @@ type State = {
   closed: string | null
   /** 最初の盤面が届いたか */
   loaded: boolean
+  /** 共有リンクから開いた閲覧専用の表示か（操作は一切送らない） */
+  readOnly: boolean
   tool: Tool
 }
 
@@ -39,6 +41,7 @@ const initial = (): State => ({
   primary: false,
   closed: null,
   loaded: false,
+  readOnly: false,
   tool: 'select',
 })
 
@@ -152,9 +155,12 @@ function refreshHistory(after: Patch) {
   }
 }
 
-/** ボードを開く。戻り値で接続を閉じる */
-export function connect(boardId: string) {
-  state = initial()
+/**
+ * ボードにつなぐ。`path` は編集なら `/api/boards/:id/ws`、共有リンクなら `/api/public/:publicId/ws`。
+ * 戻り値で接続を閉じる
+ */
+export function connect(path: string, opts: { readOnly?: boolean } = {}) {
+  state = { ...initial(), readOnly: !!opts.readOnly }
   confirmed = emptyBoard()
   pending = []
   past = []
@@ -165,7 +171,7 @@ export function connect(boardId: string) {
   let stopped = false
   let timer: number | undefined
   const open = () => {
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/boards/${boardId}/ws`)
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`)
     socket = ws
     ws.onopen = () => {
       retry = 1000
@@ -176,10 +182,14 @@ export function connect(boardId: string) {
       if (socket === ws) socket = null
       emit({ connected: false, primary: false })
       if (ev.code === 4404) return emit({ closed: 'このボードは削除されました' })
+      if (ev.code === 4403) return emit({ closed: 'このボードの公開は終了しました' })
       if (stopped) return
       // つながらない理由がボードの削除やログアウトなら、再接続しても無駄なので止める
-      const status = await fetch(`/api/boards/${boardId}/ws`).then((r) => r.status).catch(() => 0)
-      if (status === 404) return emit({ closed: 'このボードは見つかりません（削除された可能性があります）' })
+      const status = await fetch(path).then((r) => r.status).catch(() => 0)
+      if (status === 404)
+        return emit({
+          closed: state.readOnly ? 'このボードの公開は終了しました' : 'このボードは見つかりません（削除された可能性があります）',
+        })
       if (status === 401) return emit({ closed: 'ログインが切れました。ページを再読み込みしてください' })
       if (stopped) return
       timer = window.setTimeout(open, retry)
@@ -204,6 +214,8 @@ export function connect(boardId: string) {
  * 不正なら例外。戻り値の done はサーバーが受け付けたら resolve する。
  */
 export function commit(ops: Op[], opts: { record?: boolean } = {}): { ids: string[]; done: Promise<void> } {
+  // 共有リンクの表示は読むだけ。UI 側でも操作を出さないが、ここが最後の関所
+  if (state.readOnly) throw new Error('このボードは閲覧のみです')
   const full = withIds(state.board, ops)
   const before = state.board
   const { board, ids } = applyOps(before, full)

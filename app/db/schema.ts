@@ -33,6 +33,8 @@ export const boards = sqliteTable("boards", {
     .notNull()
     .references(() => users.id),
   title: text("title").notNull().default("Untitled"),
+  /** 公開中なら共有リンクの id（推測できない乱数）。null なら非公開 */
+  publicId: text("public_id").unique(),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

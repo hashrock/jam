@@ -8,7 +8,8 @@ import { placeBoard, placementOp, type SizeOf } from "./board/placement";
 import type { ClientMessage, ServerMessage } from "./board/protocol";
 import type { Bindings } from "./global.d";
 
-type Attachment = { client: string; at: number };
+/** view は公開リンクから来た閲覧専用の接続。盤面は受け取るが、こちらからは何も変えられない */
+type Attachment = { client: string; at: number; view?: boolean };
 type Origin = { by: "agent" | "user"; client?: string; batch?: number };
 
 /** タブが自動配置を返してくるまで待つ時間。過ぎたらサーバーが概算で配置する */
@@ -67,6 +68,13 @@ export class BoardRoom extends DurableObject<Bindings> {
     return result;
   }
 
+  /** 公開をやめたときに、開いたままの閲覧タブを切る */
+  async closeViewers() {
+    for (const ws of this.ctx.getWebSockets()) {
+      if ((ws.deserializeAttachment() as Attachment).view) ws.close(4403, "board unpublished");
+    }
+  }
+
   async destroy() {
     // 開いているタブに知らせてから閉じる。消した後に古いタブが書き込んで復活させないよう印を残す
     this.deleted = true;
@@ -84,11 +92,12 @@ export class BoardRoom extends DurableObject<Bindings> {
   async fetch(request: Request) {
     if (this.deleted) return new Response("board deleted", { status: 404 });
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
+    const view = new URL(request.url).searchParams.get("mode") === "view";
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
     const id = crypto.randomUUID();
-    server.serializeAttachment({ client: id, at: Date.now() } satisfies Attachment);
-    this.send(server, { type: "hello", client: id, primary: true });
+    server.serializeAttachment({ client: id, at: Date.now(), view } satisfies Attachment);
+    this.send(server, { type: "hello", client: id, primary: !view });
     this.send(server, { type: "state", version: this.version, board: this.board });
     this.announceRoles();
     return new Response(null, { status: 101, webSocket: client });
@@ -96,10 +105,15 @@ export class BoardRoom extends DurableObject<Bindings> {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     const msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)) as ClientMessage;
-    const { client } = ws.deserializeAttachment() as Attachment;
+    const { client, view } = ws.deserializeAttachment() as Attachment;
     if (this.deleted) {
       this.send(ws, { type: "deleted" });
       return ws.close(4404, "board deleted");
+    }
+    if (view) {
+      // 閲覧専用。古いタブなどから届いても盤面には触らせない
+      if (msg.type === "ops") this.send(ws, { type: "error", batch: msg.batch, message: "this board is read-only" });
+      return;
     }
     if (msg.type === "ops") {
       try {
@@ -148,7 +162,8 @@ export class BoardRoom extends DurableObject<Bindings> {
     this.touch();
     if (needsPlacement(board)) {
       // 開いているタブ（primary）が実寸で配置するのを待ち、来なければサーバーが概算で配置する
-      if (this.ctx.getWebSockets().length) await this.ctx.storage.setAlarm(Date.now() + PLACE_TIMEOUT);
+      const editors = this.ctx.getWebSockets().filter((ws) => !(ws.deserializeAttachment() as Attachment).view);
+      if (editors.length) await this.ctx.storage.setAlarm(Date.now() + PLACE_TIMEOUT);
       else await this.placeOnServer();
     } else {
       this.waiters.splice(0).forEach((w) => w());
@@ -191,9 +206,11 @@ export class BoardRoom extends DurableObject<Bindings> {
     );
   }
 
-  /** 最後に接続したタブを primary（自動配置の担当）にする */
+  /** 最後に接続した編集タブを primary（自動配置の担当）にする。閲覧タブは担当しない */
   private announceRoles() {
-    const sockets = this.ctx.getWebSockets().filter((ws) => ws.readyState === WebSocket.OPEN);
+    const sockets = this.ctx
+      .getWebSockets()
+      .filter((ws) => ws.readyState === WebSocket.OPEN && !(ws.deserializeAttachment() as Attachment).view);
     const latest = Math.max(...sockets.map((ws) => (ws.deserializeAttachment() as Attachment).at));
     for (const ws of sockets) this.send(ws, { type: "role", primary: (ws.deserializeAttachment() as Attachment).at === latest });
   }

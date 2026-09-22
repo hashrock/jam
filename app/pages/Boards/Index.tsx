@@ -3,7 +3,7 @@ import { useState } from "react";
 import Header from "../../components/Header";
 import type { SessionUser } from "../../user";
 
-type Board = { id: string; title: string; updatedAt: string };
+type Board = { id: string; title: string; publicId: string | null; updatedAt: string };
 
 const fmt = (iso: string) =>
   new Date(iso).toLocaleString("ja-JP", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -44,6 +44,17 @@ export default function BoardsIndex({ user, boards }: { user: SessionUser; board
                   <div className="truncate font-medium">{b.title}</div>
                   <div className="text-xs text-slate-500">{fmt(b.updatedAt)}</div>
                 </Link>
+                {b.publicId && (
+                  <a
+                    href={`/p/${b.publicId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="共有リンクを開く（閲覧のみ）"
+                    className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100"
+                  >
+                    公開中
+                  </a>
+                )}
                 {confirming === b.id ? (
                   <span className="flex gap-2 text-xs">
                     <button
