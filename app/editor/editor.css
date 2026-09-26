@@ -203,6 +203,8 @@
 
 /* 公開中の印（左上）と、共有リンクで開いたときの「閲覧のみ」 */
 .pill-badge {
+  display: inline-flex;
+  align-items: center;
   height: 24px;
   padding: 0 10px;
   margin-right: 4px;
