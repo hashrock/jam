@@ -9,6 +9,7 @@ import {
   ReactFlowProvider,
   SelectionMode,
   useReactFlow,
+  useStoreApi,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -17,6 +18,7 @@ import type { SessionUser } from '../user'
 import { BoardMenu, ConnectionStatus, DRAG_TYPE, ELEMENT_TOOLS, placeElement, SelectionBar, Toolbar, ViewerPill } from './chrome'
 import { pasteOps, serialize } from './clipboard'
 import { FloatingEdge, type JamEdge } from './FloatingEdge'
+import { createMouseWheelDetector, stepZoomFactor, zoomAt } from './wheelZoom'
 import { type ElNode, nodeTypes } from './nodes'
 import {
   absPos,
@@ -66,6 +68,9 @@ function toNode(raw: El, overlay: object | undefined, selected: boolean, measure
   }
 }
 
+const MIN_ZOOM = 0.1
+const MAX_ZOOM = 2
+
 function Canvas({ menu }: { menu: React.ReactNode }) {
   const board = useBoardState((s) => s.board)
   const readOnly = useBoardState((s) => s.readOnly)
@@ -74,7 +79,9 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
   const measured = useBoardState((s) => s.measured)
   const loaded = useBoardState((s) => s.loaded)
   const tool = useBoardState((s) => s.tool)
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition, fitView, getViewport, setViewport } = useReactFlow()
+  const flowStore = useStoreApi()
+  const canvasRef = useRef<HTMLDivElement>(null)
   const pointer = useRef<{ x: number; y: number } | null>(null)
   const selectionStart = useRef<{ x: number; y: number } | null>(null)
   // カーソル用: Space を押している間（ドラッグでパンできる）と、ドラッグでパンしている最中
@@ -98,6 +105,29 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
       window.removeEventListener('blur', reset)
     }
   }, [])
+
+  // ⌘・Ctrl + マウスホイールのズームは React Flow に任せると 1 ノッチで何倍にも飛ぶので、1 段ずつにする。
+  // ピンチや ⌘ + 2本指スクロールは滑らかなのでそのまま React Flow に渡す
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const isMouse = createMouseWheelDetector()
+    const onWheel = (e: WheelEvent) => {
+      // 直前の判定を覚えておくため、修飾キーが無くても毎回通す
+      const mouse = isMouse(e)
+      if (!(e.ctrlKey || e.metaKey) || !mouse || e.deltaY === 0) return
+      const flow = flowStore.getState().domNode
+      if (!(e.target instanceof Element) || e.target.closest('.nowheel') || !flow?.contains(e.target)) return
+      e.preventDefault()
+      e.stopPropagation()
+      const rect = flow.getBoundingClientRect()
+      const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      void setViewport(zoomAt(getViewport(), anchor, stepZoomFactor(e.deltaY), MIN_ZOOM, MAX_ZOOM))
+    }
+    // React Flow のハンドラより先に受け取るため、キャプチャで聞く
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
+  }, [getViewport, setViewport, flowStore])
 
   // 最初の盤面が届いたら全体を表示する
   useEffect(() => {
@@ -271,6 +301,7 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
 
   return (
     <div
+      ref={canvasRef}
       className={[
         'canvas',
         `tool-${tool === 'select' || tool === 'hand' ? tool : 'place'}`,
@@ -344,7 +375,8 @@ function Canvas({ menu }: { menu: React.ReactNode }) {
         panOnScroll
         zoomActivationKeyCode={['Meta', 'Control']}
         zoomOnDoubleClick={false}
-        minZoom={0.1}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
       >
         <Background gap={24} />
         <Controls position="bottom-right" showInteractive={false} />
